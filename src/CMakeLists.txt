@@ -13,6 +13,7 @@ idf_component_register(
     "network_station.cpp"
     "provisioning.cpp"
     "relay_output.cpp"
+    "stage_device_runtime.cpp"
     "trusted_clock.cpp"
   INCLUDE_DIRS "."
   REQUIRES
@@ -24,6 +25,7 @@ idf_component_register(
     esp_netif
     esp_timer
     esp_wifi
+    esp_websocket_client
     json
     mbedtls
     mdns

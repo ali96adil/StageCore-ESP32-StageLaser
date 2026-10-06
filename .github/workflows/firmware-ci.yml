@@ -40,6 +40,8 @@ jobs:
             tests/wifi_reconnect_policy_test.cpp \
             -o /tmp/stagelaser-wifi-policy-test
           /tmp/stagelaser-wifi-policy-test
+      - name: Verify assignment-only v2 runtime contract
+        run: python -m unittest tests/assignment_runtime_contract_test.py -v
       - name: Verify no raw toggle and no-actuation default
         run: python -m unittest discover -s tests -p '*_test.py' -v
 

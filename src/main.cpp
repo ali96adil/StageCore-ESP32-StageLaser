@@ -14,6 +14,7 @@
 #include "nvs_flash.h"
 #include "provisioning.h"
 #include "relay_output.h"
+#include "stage_device_runtime.h"
 #include "esp_system.h"
 
 #ifndef STAGECORE_FW_VERSION
@@ -120,25 +121,44 @@ extern "C" void app_main(void) {
   }
   ESP_LOGI(kTag, "Stage LAN connected as %s", config.display_name.c_str());
 
-  stagecore::VerifiedHub hub;
-  while (stagecore::discover_and_verify_hub(&hub) != ESP_OK) {
-    ESP_LOGW(kTag, "verified StageCore Hub not available yet");
+  while (true) {
+    if (stagecore::wait_for_station_connection(0) != ESP_OK) {
+      ESP_LOGW(kTag, "Stage LAN disconnected; waiting for reconnect");
+      if (stagecore::wait_for_station_connection(30000) != ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        continue;
+      }
+    }
+
+    stagecore::VerifiedHub hub;
+    if (stagecore::discover_and_verify_hub(&hub) != ESP_OK) {
+      ESP_LOGW(kTag, "verified StageCore Hub not available yet");
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      continue;
+    }
+    ESP_LOGI(kTag, "verified Hub %s at %s:%u", hub.hub_id.c_str(),
+             hub.address.c_str(), hub.port);
+
+    stagecore::RuntimeCredential credential;
+    if (stagecore::ensure_paired_and_authenticate(
+            hub, &identity, config.display_name, &credential) != ESP_OK) {
+      ESP_LOGW(kTag, "Hub pairing/authentication not ready; retrying");
+      vTaskDelay(pdMS_TO_TICKS(3000));
+      continue;
+    }
+
+    ESP_LOGI(kTag,
+             "authenticated StageCore v2 assignment runtime starting");
+    const esp_err_t runtime_err =
+        stagecore::run_stage_device_assignment_runtime(
+            hub, credential, identity, config, &laser);
+
+    // The assignment-only slice never grants show-command authority. A
+    // reconnect is expected after an assignment commit because the Hub fences
+    // the old authenticated socket. Unknown physical state is never toggled.
+    credential = stagecore::RuntimeCredential{};
+    ESP_LOGW(kTag, "Stage Device assignment runtime ended: %s",
+             esp_err_to_name(runtime_err));
     vTaskDelay(pdMS_TO_TICKS(2000));
   }
-  ESP_LOGI(kTag, "verified Hub %s at %s:%u", hub.hub_id.c_str(),
-           hub.address.c_str(), hub.port);
-
-  stagecore::RuntimeCredential credential;
-  while (stagecore::ensure_paired_and_authenticate(
-             hub, &identity, config.display_name, &credential) != ESP_OK) {
-    ESP_LOGW(kTag, "Hub pairing/authentication not ready; retrying");
-    vTaskDelay(pdMS_TO_TICKS(3000));
-  }
-
-  ESP_LOGI(kTag, "authenticated StageCore runtime credential acquired");
-  ESP_LOGW(kTag,
-           "Hub trust slice complete; Stage Device command runtime is not "
-           "installed yet; relay remains NO-ACTUATION");
-
-  while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
