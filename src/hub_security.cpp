@@ -109,7 +109,7 @@ std::string make_hostname(const std::string &device_id) {
     if (ch != '-') compact.push_back(ch);
   }
   if (compact.size() > 8) compact = compact.substr(compact.size() - 8);
-  return "stagecore-light-" + compact;
+  return "stagecore-laser-" + compact;
 }
 
 std::string random_nonce_base64() {
