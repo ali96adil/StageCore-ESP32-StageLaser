@@ -18,7 +18,7 @@
 #include "esp_system.h"
 
 #ifndef STAGECORE_FW_VERSION
-#define STAGECORE_FW_VERSION "0.1.0-dev"
+#define STAGECORE_FW_VERSION "0.1.0-dev.1"
 #endif
 #ifndef STAGECORE_BUILD_REVISION
 #define STAGECORE_BUILD_REVISION "unknown"
