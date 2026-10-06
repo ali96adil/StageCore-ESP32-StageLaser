@@ -42,12 +42,15 @@ The device MAC is intentionally not recorded in the public repository.
 
 ## Deliberately not qualified yet
 
-These still require the relay / electrical hardware and must not be guessed:
+Measured / reviewed but not yet fully qualified:
+- relay input polarity: **active-low verified**
+- relay IN idle voltage: **approximately 5 V verified**
+- direct ESP32 GPIO drive: **prohibited**
+- first no-load output candidate: **GPIO3** (must still pass physical boot/reset tests)
 
-- physical relay GPIO
-- relay active polarity
-- relay module 3.3 V electrical compatibility
-- boot/reset inactive electrical behavior
+Still pending:
+- transistor/MOSFET or equivalent 3.3 V-safe pull-to-ground interface qualification
+- physical GPIO3 boot/reset inactive electrical behavior
 - shared-power qualification
 - production partition map
 - OTA layout
@@ -64,15 +67,19 @@ Board identity: **PASS**
 - actual ESP32-C3 Super Mini photographed
 - chip/flash/crystal/USB mode read directly with esptool
 
-Relay identification: **PENDING**
-- photograph relay board front/back and all markings
-- identify VCC / GND / IN and COM / NO / NC
-- confirm relay input voltage/current and isolation/transistor topology
+Relay identification: **PARTIAL PASS**
+- front/back board markings captured
+- VCC / GND / IN identified
+- IN idle measured at approximately 5 V
+- IN-to-GND actuation confirms active-low trigger
+- dry-contact COM / NO / NC and final transistor/MOSFET interface still require bench qualification
 
 ### 2. No-load GPIO qualification
-- choose a GPIO with no unsafe strap/boot behavior
+- first candidate: GPIO3
+- keep relay disconnected
 - confirm power-up, reset and bootloader entry never assert the output
 - measure idle level with a multimeter or logic analyzer
+- do not set STAGECORE_LASER_OUTPUT_GPIO until this passes
 
 ### 3. Relay-only qualification
 - keep the laser disconnected
