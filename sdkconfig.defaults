@@ -8,5 +8,7 @@ CONFIG_MBEDTLS_SSL_TLS1_3_KEXM_EPHEMERAL=y
 CONFIG_MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE=y
 CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS=y
 
-# Generic CI target only. Physical flash/partition qualification is intentionally
-# deferred until the exact ESP32-C3 Super Mini board revision is identified.
+# The qualification unit was measured as embedded 4 MB flash. Keep the
+# no-actuation build consistent with the real flash capacity; the production
+# OTA partition layout is still deliberately unqualified.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
