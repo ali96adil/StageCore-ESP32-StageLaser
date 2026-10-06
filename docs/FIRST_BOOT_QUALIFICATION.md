@@ -40,7 +40,7 @@ The first boot must contain:
 ```text
 StageLaser firmware ...
 NO-ACTUATION build: relay GPIO is intentionally disabled
-laser truth restored; ...
+laser truth restored; ... shared_power_qualified=no resync_required=yes
 device_id=...
 ```
 
@@ -64,7 +64,8 @@ Save/capture the serial text and run:
 ```bash
 python tools/check_first_boot_log.py first-boot.log \
   --expected-revision "$(git rev-parse HEAD)" \
-  --expect-provisioning
+  --expect-provisioning \
+  --expect-resync-required
 ```
 
 A clean bootstrap returns:
@@ -74,6 +75,10 @@ StageLaser first-boot qualification: PASS
 ```
 
 The checker intentionally does not print the provisioning password.
+
+For the first cold qualification boot, `shared_power_qualified=no` and
+`resync_required=yes` are mandatory. The device must not infer OFF from a
+power-on/reset while the laser/ESP shared-power relationship remains unqualified.
 
 ## What this does not qualify
 

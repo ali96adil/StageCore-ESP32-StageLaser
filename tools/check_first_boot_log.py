@@ -17,6 +17,7 @@ def evaluate(
     *,
     expected_revision: str | None = None,
     expect_provisioning: bool = False,
+    expect_resync_required: bool = False,
 ) -> list[str]:
     failures: list[str] = []
 
@@ -45,6 +46,16 @@ def evaluate(
         if marker in log:
             failures.append(f"forbidden/failure marker present: {marker}")
 
+    if expect_resync_required:
+        if "shared_power_qualified=no" not in log:
+            failures.append(
+                "missing cold-boot safety marker: shared_power_qualified=no"
+            )
+        if "resync_required=yes" not in log:
+            failures.append(
+                "cold boot did not require attended state resync"
+            )
+
     if expect_provisioning:
         provisioning_required = (
             "first-run provisioning AP SSID=",
@@ -66,6 +77,7 @@ def main() -> int:
     )
     parser.add_argument("--expected-revision")
     parser.add_argument("--expect-provisioning", action="store_true")
+    parser.add_argument("--expect-resync-required", action="store_true")
     args = parser.parse_args()
 
     if args.logfile:
@@ -77,6 +89,7 @@ def main() -> int:
         log,
         expected_revision=args.expected_revision,
         expect_provisioning=args.expect_provisioning,
+        expect_resync_required=args.expect_resync_required,
     )
 
     if failures:
