@@ -1074,6 +1074,7 @@ esp_err_t run_stage_device_runtime(
   }
 
   RuntimeContext context;
+  RuntimeCommandState command_state;
   context.events = xEventGroupCreate();
   context.lock = xSemaphoreCreateMutex();
   context.device_id = identity.device_id();
@@ -1151,8 +1152,6 @@ esp_err_t run_stage_device_runtime(
       goto cleanup;
     }
   }
-
-  RuntimeCommandState command_state;
 
   if (context.assignment_state == "ACTIVE") {
     err = drive_safe_off(laser);
