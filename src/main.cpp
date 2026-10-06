@@ -5,6 +5,8 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hub_discovery.h"
+#include "hub_security.h"
 #include "network_station.h"
 #include "nvs_flash.h"
 #include "provisioning.h"
@@ -65,19 +67,33 @@ extern "C" void app_main(void) {
         identity.device_id(), default_display_name(identity.device_id()));
   }
 
-  const esp_err_t network =
+  esp_err_t network =
       stagecore::connect_station(config.wifi_ssid, config.wifi_password, 30000);
-  if (network == ESP_OK) {
-    ESP_LOGI(kTag, "Stage LAN connected as %s; Hub runtime not installed yet",
-             config.display_name.c_str());
-  } else {
-    ESP_LOGW(kTag,
-             "Stage LAN not connected yet (%s); automatic reconnect remains "
-             "enabled; relay remains NO-ACTUATION",
-             esp_err_to_name(network));
+  while (network != ESP_OK) {
+    ESP_LOGW(kTag, "waiting for Stage LAN: %s", esp_err_to_name(network));
+    network = stagecore::wait_for_station_connection(30000);
+  }
+  ESP_LOGI(kTag, "Stage LAN connected as %s", config.display_name.c_str());
+
+  stagecore::VerifiedHub hub;
+  while (stagecore::discover_and_verify_hub(&hub) != ESP_OK) {
+    ESP_LOGW(kTag, "verified StageCore Hub not available yet");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+  ESP_LOGI(kTag, "verified Hub %s at %s:%u", hub.hub_id.c_str(),
+           hub.address.c_str(), hub.port);
+
+  stagecore::RuntimeCredential credential;
+  while (stagecore::ensure_paired_and_authenticate(
+             hub, &identity, config.display_name, &credential) != ESP_OK) {
+    ESP_LOGW(kTag, "Hub pairing/authentication not ready; retrying");
+    vTaskDelay(pdMS_TO_TICKS(3000));
   }
 
+  ESP_LOGI(kTag, "authenticated StageCore runtime credential acquired");
   ESP_LOGW(kTag,
-           "provisioning/Wi-Fi slices only; Hub runtime still disabled; relay "
-           "remains NO-ACTUATION");
+           "Hub trust slice complete; Stage Device command runtime is not "
+           "installed yet; relay remains NO-ACTUATION");
+
+  while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }

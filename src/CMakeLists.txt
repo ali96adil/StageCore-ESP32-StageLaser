@@ -3,6 +3,8 @@ idf_component_register(
     "main.cpp"
     "config_store.cpp"
     "device_identity.cpp"
+    "hub_discovery.cpp"
+    "hub_security.cpp"
     "laser_state_machine.cpp"
     "network_station.cpp"
     "provisioning.cpp"
@@ -11,10 +13,14 @@ idf_component_register(
   REQUIRES
     driver
     esp_event
+    esp_http_client
     esp_http_server
+    esp-tls
     esp_netif
     esp_timer
     esp_wifi
+    json
     mbedtls
+    mdns
     nvs_flash
 )
