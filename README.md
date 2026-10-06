@@ -40,7 +40,7 @@ The default build remains deliberately **NO-ACTUATION** until the exact ESP32-C3
 
 ## Safety invariants
 
-- no `LASER_TOGGLE`
+- no raw toggle command or API
 - boot never creates a relay pulse
 - ARM is required before ON or Flash
 - SET ON/OFF are desired-state and idempotent
