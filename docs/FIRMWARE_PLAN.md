@@ -52,8 +52,8 @@ Still pending:
 - transistor/MOSFET or equivalent 3.3 V-safe pull-to-ground interface qualification
 - physical GPIO3 boot/reset inactive electrical behavior
 - shared-power qualification
-- production partition map
-- OTA layout
+- physical qualification of the 4 MB dual-slot OTA candidate
+- controlled OTA transport / rollback acceptance
 - physical local-recovery button GPIO
 
 The current firmware build remains NO-ACTUATION.
@@ -138,8 +138,9 @@ Relay identification: **PARTIAL PASS**
 
 ### 10. Production update and recovery path
 - real flash capacity: **4 MB verified**
-- define OTA partitions
-- qualify the controlled OTA path
+- dual-slot OTA partition candidate: **defined and CI-gated, not physically qualified**
+- qualify first boot and update/rollback behavior on the real board
+- implement and qualify the controlled StageCore OTA path
 - choose/qualify a physical local-recovery/trust-reset input if required
 
 ## Release gate
