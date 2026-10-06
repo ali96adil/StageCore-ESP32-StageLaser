@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gpio_no_load_qualification.h"
 #include "hub_discovery.h"
 #include "hub_security.h"
 #include "laser_controller.h"
@@ -72,6 +73,7 @@ stagecore::stagelaser::ResetClass classify_reset_reason(esp_reset_reason_t reaso
 }  // namespace
 
 extern "C" void app_main(void) {
+  ESP_ERROR_CHECK(stagecore::stagelaser::gpio_no_load_qualification_init());
   init_nvs();
   ESP_LOGI(kTag, "StageLaser firmware %s (%s)", STAGECORE_FW_VERSION,
            STAGECORE_BUILD_REVISION);

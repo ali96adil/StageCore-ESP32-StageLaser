@@ -78,14 +78,18 @@ It remains unqualified until the actual board passes the following test with
 
 1. Flash the normal NO-ACTUATION StageLaser image first and prove normal boot.
 2. Keep relay and laser completely disconnected.
-3. Measure GPIO3 relative to GND during:
+3. Then use the dedicated `esp32c3-gpio3-no-load-qualification` target.
+4. Measure GPIO3 relative to GND during:
    - USB insertion / cold power-up
    - RESET press/release
    - BOOT + RESET download-mode entry
    - normal application startup
-4. There must be no unsafe HIGH pulse capable of turning the proposed NPN stage on.
-5. Repeat each transition at least 10 times.
-6. If a logic analyzer is available, use it in addition to the multimeter.
+5. There must be no unsafe HIGH pulse capable of turning the proposed NPN stage on.
+6. Repeat each transition at least 10 times.
+7. If a logic analyzer is available, use it in addition to the multimeter.
+
+The qualification target only holds GPIO3 LOW after app startup and never drives
+it HIGH. See `docs/GPIO3_NO_LOAD_QUALIFICATION.md`.
 
 GPIO3 must not be promoted to the StageLaser hardware profile until this passes.
 

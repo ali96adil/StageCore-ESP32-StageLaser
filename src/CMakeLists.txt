@@ -4,6 +4,7 @@ idf_component_register(
     "config_store.cpp"
     "command_replay_store.cpp"
     "device_identity.cpp"
+    "gpio_no_load_qualification.cpp"
     "hub_discovery.cpp"
     "hub_security.cpp"
     "laser_state_machine.cpp"

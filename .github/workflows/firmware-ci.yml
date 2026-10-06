@@ -75,6 +75,14 @@ jobs:
           grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0' platformio.ini
           grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1' platformio.ini
           test -f .pio/build/esp32c3-ci-no-actuation/firmware.bin
+      - name: Build GPIO3 no-load qualification image
+        run: pio run -e esp32c3-gpio3-no-load-qualification
+      - name: Prove GPIO3 qualification image is still no-actuation
+        run: |
+          set -euo pipefail
+          test -f .pio/build/esp32c3-gpio3-no-load-qualification/firmware.bin
+          grep -A15 '^\[env:esp32c3-gpio3-no-load-qualification\]' platformio.ini | grep -q -- 'extends = env:esp32c3-ci-no-actuation'
+          grep -A15 '^\[env:esp32c3-gpio3-no-load-qualification\]' platformio.ini | grep -q -- 'STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO=3'
       - name: Build 4MB OTA candidate as no-actuation
         run: pio run -e esp32c3-ota-candidate-no-actuation
       - name: Prove OTA candidate artifact is no-actuation
