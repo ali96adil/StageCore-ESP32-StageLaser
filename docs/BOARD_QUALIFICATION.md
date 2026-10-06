@@ -36,6 +36,11 @@ These items are no longer assumptions:
 
 The existing 4 MB CI geometry is therefore capacity-compatible with the real board.
 
+The firmware console is explicitly configured for the verified native
+USB-Serial/JTAG controller using `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`, with
+the secondary console disabled. This keeps first-boot logs on the same USB-C
+interface used for flashing and avoids depending on UART0 GPIO20/GPIO21.
+
 ## Relay electrical observations
 
 Measured on the actual 5 V relay module:

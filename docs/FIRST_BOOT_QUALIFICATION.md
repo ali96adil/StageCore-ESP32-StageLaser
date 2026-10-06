@@ -27,6 +27,10 @@ pio run -e esp32c3-ci-no-actuation
 
 Then upload to the explicitly identified native USB port.
 
+The application console is intentionally configured for the ESP32-C3 native
+USB Serial/JTAG controller. After flashing, monitor the same `/dev/cu.usbmodem*`
+device at 115200 baud; do not expect StageLaser logs on the UART0 GPIO pins.
+
 Do not use the OTA-candidate environment for this first hardware qualification.
 
 ## Serial observations
