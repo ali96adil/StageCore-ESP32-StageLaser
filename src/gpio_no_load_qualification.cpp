@@ -11,6 +11,15 @@
 #define STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO -1
 #endif
 
+#ifndef STAGECORE_LASER_ACTUATION_ENABLED
+#define STAGECORE_LASER_ACTUATION_ENABLED 0
+#endif
+
+#if STAGECORE_GPIO_NO_LOAD_QUALIFICATION == 1 && \
+    STAGECORE_LASER_ACTUATION_ENABLED == 1
+#error "GPIO no-load qualification must never be combined with laser actuation"
+#endif
+
 namespace stagecore::stagelaser {
 namespace {
 constexpr char kTag[] = "stagelaser-gpio-qual";
