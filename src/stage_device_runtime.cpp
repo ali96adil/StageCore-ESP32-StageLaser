@@ -18,6 +18,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "command_replay_store.h"
 #include "laser_command_contract.h"
 #include "laser_observation.h"
 
@@ -845,6 +846,15 @@ bool known_off(const stagelaser::LaserController &laser) {
          !m.resync_required();
 }
 
+bool command_may_actuate(const std::string &command_type) {
+  return command_type == "LASER_DISARM" ||
+         command_type == "LASER_SET_ON" ||
+         command_type == "LASER_SET_OFF" ||
+         command_type == "LASER_FLASH_START" ||
+         command_type == "LASER_FLASH_STOP" ||
+         command_type == "LASER_SAFE_OFF";
+}
+
 std::string start_ready_command(
     const stagelaser::CommandEnvelope &command,
     const std::string &device_id,
@@ -857,6 +867,35 @@ std::string start_ready_command(
     return stagelaser::make_command_result(
         device_id, command.command_id, "REJECTED", "LASER_BUSY", "RUNTIME",
         "StageLaser already has a command awaiting a stable output state", true);
+  }
+
+  if (command_may_actuate(command.command_type)) {
+    bool seen = false;
+    esp_err_t replay_err =
+        stagelaser::command_replay_seen(command.command_id, &seen);
+    if (replay_err != ESP_OK) {
+      mark_result(state, command, "FAILED", false);
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "FAILED",
+          "DEVICE_PERSISTENCE_FAILED", "PERSISTENCE",
+          "StageLaser replay fence could not be read", false);
+    }
+    if (seen) {
+      mark_result(state, command, "REJECTED", false);
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "REJECTED",
+          "DEVICE_COMMAND_DUPLICATE", "IDEMPOTENCY",
+          "This actuation command_id was already accepted before", false);
+    }
+    replay_err = stagelaser::command_replay_remember(command.command_id);
+    if (replay_err != ESP_OK) {
+      mark_result(state, command, "FAILED", false);
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "FAILED",
+          "DEVICE_PERSISTENCE_FAILED", "PERSISTENCE",
+          "StageLaser replay fence could not be persisted before actuation",
+          false);
+    }
   }
 
   stagelaser::ControllerOutcome outcome{};

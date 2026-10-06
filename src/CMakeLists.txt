@@ -2,6 +2,7 @@ idf_component_register(
   SRCS
     "main.cpp"
     "config_store.cpp"
+    "command_replay_store.cpp"
     "device_identity.cpp"
     "hub_discovery.cpp"
     "hub_security.cpp"
