@@ -15,7 +15,7 @@
 #include "mbedtls/base64.h"
 
 #ifndef STAGECORE_FW_VERSION
-#define STAGECORE_FW_VERSION "0.2.0-dev"
+#define STAGECORE_FW_VERSION "0.1.0-dev.1"
 #endif
 
 namespace stagecore {
