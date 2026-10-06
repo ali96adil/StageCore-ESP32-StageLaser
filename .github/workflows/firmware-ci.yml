@@ -40,6 +40,13 @@ jobs:
             tests/wifi_reconnect_policy_test.cpp \
             -o /tmp/stagelaser-wifi-policy-test
           /tmp/stagelaser-wifi-policy-test
+      - name: Test local recovery hold policy
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/recovery_policy_test.cpp \
+            -o /tmp/stagelaser-recovery-policy-test
+          /tmp/stagelaser-recovery-policy-test
       - name: Verify active v2 runtime contract
         run: python -m unittest tests/assignment_runtime_contract_test.py -v
       - name: Verify no raw toggle and no-actuation default
@@ -68,3 +75,11 @@ jobs:
           grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0' platformio.ini
           grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1' platformio.ini
           test -f .pio/build/esp32c3-ci-no-actuation/firmware.bin
+      - name: Build 4MB OTA candidate as no-actuation
+        run: pio run -e esp32c3-ota-candidate-no-actuation
+      - name: Prove OTA candidate artifact is no-actuation
+        run: |
+          set -euo pipefail
+          test -f .pio/build/esp32c3-ota-candidate-no-actuation/firmware.bin
+          grep -A30 '^\[env:esp32c3-ota-candidate-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0'
+          grep -A30 '^\[env:esp32c3-ota-candidate-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1'
