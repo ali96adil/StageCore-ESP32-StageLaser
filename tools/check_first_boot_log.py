@@ -18,6 +18,7 @@ def evaluate(
     expected_revision: str | None = None,
     expect_provisioning: bool = False,
     expect_resync_required: bool = False,
+    expect_gpio3_no_load: bool = False,
 ) -> list[str]:
     failures: list[str] = []
 
@@ -56,6 +57,14 @@ def evaluate(
                 "cold boot did not require attended state resync"
             )
 
+    if expect_gpio3_no_load:
+        marker = (
+            "GPIO3 NO-LOAD QUALIFICATION: candidate held LOW; "
+            "relay and laser must remain disconnected"
+        )
+        if marker not in log:
+            failures.append("missing GPIO3 no-load qualification marker")
+
     if expect_provisioning:
         provisioning_required = (
             "first-run provisioning AP SSID=",
@@ -78,6 +87,7 @@ def main() -> int:
     parser.add_argument("--expected-revision")
     parser.add_argument("--expect-provisioning", action="store_true")
     parser.add_argument("--expect-resync-required", action="store_true")
+    parser.add_argument("--expect-gpio3-no-load", action="store_true")
     args = parser.parse_args()
 
     if args.logfile:
@@ -90,6 +100,7 @@ def main() -> int:
         expected_revision=args.expected_revision,
         expect_provisioning=args.expect_provisioning,
         expect_resync_required=args.expect_resync_required,
+        expect_gpio3_no_load=args.expect_gpio3_no_load,
     )
 
     if failures:
