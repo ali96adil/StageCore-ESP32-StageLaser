@@ -3,7 +3,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "laser_state_machine.h"
+#include "network_station.h"
 #include "nvs_flash.h"
 #include "relay_output.h"
 
@@ -29,9 +29,7 @@ void init_nvs() {
 
 [[noreturn]] void hold_safe_failure(const char *reason) {
   ESP_LOGE(kTag, "safe failure: %s", reason);
-  while (true) {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+  while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
 }  // namespace
 
@@ -54,14 +52,24 @@ extern "C" void app_main(void) {
   }
   if (!config.complete()) {
     ESP_LOGW(kTag,
-             "configuration incomplete; provisioning slice not installed yet; "
-             "relay remains NO-ACTUATION");
-  } else {
-    ESP_LOGI(kTag, "stored Stage LAN configuration available for %s",
+             "Stage LAN configuration incomplete; provisioning is not installed "
+             "in this slice; relay remains NO-ACTUATION");
+    return;
+  }
+
+  const esp_err_t network =
+      stagecore::connect_station(config.wifi_ssid, config.wifi_password, 30000);
+  if (network == ESP_OK) {
+    ESP_LOGI(kTag, "Stage LAN connected as %s; Hub runtime not installed yet",
              config.display_name.c_str());
+  } else {
+    ESP_LOGW(kTag,
+             "Stage LAN not connected yet (%s); automatic reconnect remains "
+             "enabled; relay remains NO-ACTUATION",
+             esp_err_to_name(network));
   }
 
   ESP_LOGW(kTag,
-           "identity/config slice only; networking/runtime still disabled; "
-           "relay remains NO-ACTUATION");
+           "Wi-Fi station slice only; Hub runtime still disabled; relay "
+           "remains NO-ACTUATION");
 }

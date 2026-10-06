@@ -25,6 +25,13 @@ jobs:
             src/laser_state_machine.cpp tests/state_machine_test.cpp \
             -o /tmp/stagelaser-state-machine-test
           /tmp/stagelaser-state-machine-test
+      - name: Test Wi-Fi reconnect policy
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            tests/wifi_reconnect_policy_test.cpp \
+            -o /tmp/stagelaser-wifi-policy-test
+          /tmp/stagelaser-wifi-policy-test
       - name: Verify no raw toggle and no-actuation default
         run: python -m unittest discover -s tests -p '*_test.py' -v
 
