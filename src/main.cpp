@@ -7,7 +7,8 @@
 #include "freertos/task.h"
 #include "hub_discovery.h"
 #include "hub_security.h"
-#include "laser_state_machine.h"
+#include "laser_controller.h"
+#include "laser_controller_esp.h"
 #include "laser_state_store.h"
 #include "network_station.h"
 #include "nvs_flash.h"
@@ -83,17 +84,18 @@ extern "C" void app_main(void) {
     hold_safe_failure("laser state storage unavailable");
   }
 
-  stagecore::stagelaser::StateMachine laser;
-  laser.Boot(
+  stagecore::stagelaser::NvsPersistentStateSink laser_store;
+  stagecore::stagelaser::RelayOutputActuator laser_actuator;
+  stagecore::stagelaser::LaserController laser(
       persisted, classify_reset_reason(esp_reset_reason()),
-      STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1);
-  if (stagecore::stagelaser::save_persistent_state(
-          laser.PersistentSnapshot()) != ESP_OK) {
+      STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1,
+      &laser_store, &laser_actuator);
+  if (!laser_store.Save(laser.machine().PersistentSnapshot())) {
     hold_safe_failure("unable to persist restored laser truth state");
   }
   ESP_LOGI(kTag, "laser truth restored; persisted=%s resync_required=%s",
            persisted_found ? "yes" : "no",
-           laser.resync_required() ? "yes" : "no");
+           laser.machine().resync_required() ? "yes" : "no");
 
   stagecore::DeviceIdentity identity;
   if (identity.LoadOrCreate() != ESP_OK) {
