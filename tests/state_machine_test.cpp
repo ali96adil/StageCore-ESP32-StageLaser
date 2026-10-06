@@ -20,7 +20,7 @@ static void release(StateMachine &m, uint64_t now) {
 int main() {
   {
     StateMachine m;
-    m.Boot(tracked(LogicalState::kOff));
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
     assert(m.arm_state() == ArmState::kDisarmed);
     assert(m.CommandSetOn(0).result == ResultCode::kRejectedDisarmed);
     assert(m.CommandArm(0).result == ResultCode::kAccepted);
@@ -45,7 +45,7 @@ int main() {
     PersistentState interrupted = tracked(LogicalState::kOff);
     interrupted.interrupted_transition = true;
     StateMachine m;
-    m.Boot(interrupted);
+    m.Boot(interrupted, ResetClass::kSoftware, false);
     assert(m.logical_state() == LogicalState::kUnknown);
     assert(m.CommandArm(0).result == ResultCode::kRejectedUnknown);
     assert(m.CommandSafeOff(0).result == ResultCode::kRejectedUnsafe);
@@ -56,7 +56,7 @@ int main() {
 
   {
     StateMachine m;
-    m.Boot(tracked(LogicalState::kOff));
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
     assert(m.CommandArm(0).result == ResultCode::kAccepted);
     auto start = m.CommandFlashStart(1000, FlashRequest{1.0, 2000});
     assert(start.actuator == ActuatorAction::kPick);
@@ -66,7 +66,7 @@ int main() {
     const PersistentState during_flash = m.PersistentSnapshot();
     assert(during_flash.flash_session_in_progress);
     StateMachine rebooted;
-    rebooted.Boot(during_flash);
+    rebooted.Boot(during_flash, ResetClass::kSoftware, false);
     assert(rebooted.arm_state() == ArmState::kDisarmed);
     assert(rebooted.logical_state() == LogicalState::kUnknown);
     assert(rebooted.CommandSafeOff(0).result == ResultCode::kRejectedUnsafe);
@@ -86,7 +86,7 @@ int main() {
 
   {
     StateMachine m;
-    m.Boot(tracked(LogicalState::kOn));
+    m.Boot(tracked(LogicalState::kOn), ResetClass::kSoftware, false);
     auto safe = m.CommandSafeOff(0);
     assert(safe.actuator == ActuatorAction::kPick);
     release(m, 180);
@@ -96,11 +96,39 @@ int main() {
 
   {
     StateMachine m;
-    m.Boot(tracked(LogicalState::kOff));
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
     assert(m.CommandArm(0).result == ResultCode::kAccepted);
     auto bad = m.CommandFlashStart(0, FlashRequest{2.0, 8000});
     assert(bad.result == ResultCode::kRejectedLimits);
     assert(m.relay_pulse_count() == 0);
+  }
+
+  {
+    const PersistentState prior_on = tracked(LogicalState::kOn);
+
+    StateMachine software;
+    software.Boot(prior_on, ResetClass::kSoftware, false);
+    assert(software.arm_state() == ArmState::kDisarmed);
+    assert(software.logical_state() == LogicalState::kOn);
+
+    StateMachine watchdog;
+    watchdog.Boot(prior_on, ResetClass::kWatchdog, false);
+    assert(watchdog.logical_state() == LogicalState::kOn);
+
+    StateMachine power_unqualified;
+    power_unqualified.Boot(prior_on, ResetClass::kPowerOn, false);
+    assert(power_unqualified.logical_state() == LogicalState::kUnknown);
+    assert(power_unqualified.CommandSafeOff(0).result ==
+           ResultCode::kRejectedUnsafe);
+
+    StateMachine brownout_unqualified;
+    brownout_unqualified.Boot(prior_on, ResetClass::kBrownout, false);
+    assert(brownout_unqualified.logical_state() == LogicalState::kUnknown);
+
+    StateMachine power_shared;
+    power_shared.Boot(prior_on, ResetClass::kPowerOn, true);
+    assert(power_shared.logical_state() == LogicalState::kOff);
+    assert(power_shared.state_quality() == StateQuality::kTracked);
   }
 
   std::cout << "StageLaser state-machine tests PASS\n";

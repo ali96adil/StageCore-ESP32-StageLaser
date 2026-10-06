@@ -7,24 +7,41 @@ namespace stagecore::stagelaser {
 
 StateMachine::StateMachine(Limits limits) : limits_(limits) {}
 
-void StateMachine::Boot(const PersistentState &persisted) {
+void StateMachine::Boot(const PersistentState &persisted, ResetClass reset,
+                        bool shared_power_qualified) {
   arm_ = ArmState::kDisarmed;
   relay_pulse_count_ = persisted.relay_pulse_count;
   pulse_in_progress_ = false;
   release_requested_ = false;
   flash_active_ = false;
   flash_stop_requested_ = false;
+
   if (persisted.interrupted_transition || persisted.flash_session_in_progress) {
     logical_ = LogicalState::kUnknown;
     quality_ = StateQuality::kUnknown;
     return;
   }
-  if ((persisted.stable_state == LogicalState::kOff || persisted.stable_state == LogicalState::kOn) &&
-      (persisted.quality == StateQuality::kTracked || persisted.quality == StateQuality::kConfirmed)) {
+
+  const bool stable =
+      (persisted.stable_state == LogicalState::kOff ||
+       persisted.stable_state == LogicalState::kOn) &&
+      (persisted.quality == StateQuality::kTracked ||
+       persisted.quality == StateQuality::kConfirmed);
+
+  if ((reset == ResetClass::kSoftware || reset == ResetClass::kWatchdog) &&
+      stable) {
     logical_ = persisted.stable_state;
     quality_ = persisted.quality;
     return;
   }
+
+  if ((reset == ResetClass::kPowerOn || reset == ResetClass::kBrownout) &&
+      shared_power_qualified) {
+    logical_ = LogicalState::kOff;
+    quality_ = StateQuality::kTracked;
+    return;
+  }
+
   logical_ = LogicalState::kUnknown;
   quality_ = StateQuality::kUnknown;
 }

@@ -7,16 +7,22 @@
 #include "freertos/task.h"
 #include "hub_discovery.h"
 #include "hub_security.h"
+#include "laser_state_machine.h"
+#include "laser_state_store.h"
 #include "network_station.h"
 #include "nvs_flash.h"
 #include "provisioning.h"
 #include "relay_output.h"
+#include "esp_system.h"
 
 #ifndef STAGECORE_FW_VERSION
 #define STAGECORE_FW_VERSION "0.1.0-dev"
 #endif
 #ifndef STAGECORE_BUILD_REVISION
 #define STAGECORE_BUILD_REVISION "unknown"
+#endif
+#ifndef STAGECORE_LASER_SHARED_POWER_QUALIFIED
+#define STAGECORE_LASER_SHARED_POWER_QUALIFIED 0
 #endif
 
 namespace {
@@ -43,6 +49,24 @@ std::string default_display_name(const std::string &device_id) {
   }
   return "StageLaser";
 }
+
+stagecore::stagelaser::ResetClass classify_reset_reason(esp_reset_reason_t reason) {
+  using stagecore::stagelaser::ResetClass;
+  switch (reason) {
+    case ESP_RST_SW:
+      return ResetClass::kSoftware;
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_INT_WDT:
+    case ESP_RST_WDT:
+      return ResetClass::kWatchdog;
+    case ESP_RST_POWERON:
+      return ResetClass::kPowerOn;
+    case ESP_RST_BROWNOUT:
+      return ResetClass::kBrownout;
+    default:
+      return ResetClass::kUnknown;
+  }
+}
 }  // namespace
 
 extern "C" void app_main(void) {
@@ -51,6 +75,25 @@ extern "C" void app_main(void) {
            STAGECORE_BUILD_REVISION);
 
   ESP_ERROR_CHECK(stagecore::stagelaser::relay_output_init());
+
+  stagecore::stagelaser::PersistentState persisted;
+  bool persisted_found = false;
+  if (stagecore::stagelaser::load_persistent_state(
+          &persisted, &persisted_found) != ESP_OK) {
+    hold_safe_failure("laser state storage unavailable");
+  }
+
+  stagecore::stagelaser::StateMachine laser;
+  laser.Boot(
+      persisted, classify_reset_reason(esp_reset_reason()),
+      STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1);
+  if (stagecore::stagelaser::save_persistent_state(
+          laser.PersistentSnapshot()) != ESP_OK) {
+    hold_safe_failure("unable to persist restored laser truth state");
+  }
+  ESP_LOGI(kTag, "laser truth restored; persisted=%s resync_required=%s",
+           persisted_found ? "yes" : "no",
+           laser.resync_required() ? "yes" : "no");
 
   stagecore::DeviceIdentity identity;
   if (identity.LoadOrCreate() != ESP_OK) {
