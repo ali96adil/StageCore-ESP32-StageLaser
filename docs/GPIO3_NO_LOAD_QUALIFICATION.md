@@ -54,6 +54,22 @@ pio run -e esp32c3-gpio3-no-load-qualification
 Do not upload this target until the normal first-boot NO-ACTUATION
 qualification has already passed.
 
+The source also contains a compile-time fence: a build that enables both GPIO
+no-load qualification and laser actuation is rejected at compile time.
+
+After capturing the serial log, validate that the intended qualification image
+actually booted:
+
+```bash
+python tools/check_first_boot_log.py gpio3-qual.log \
+  --expected-revision "$(git rev-parse HEAD)" \
+  --expect-gpio3-no-load
+```
+
+The checker verifies the GPIO3 qualification marker while retaining the normal
+NO-ACTUATION/failure checks. Electrical acceptance still depends on the physical
+meter/logic-analyzer measurement below.
+
 ## Physical acceptance
 
 With relay and laser disconnected:
