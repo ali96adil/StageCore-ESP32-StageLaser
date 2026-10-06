@@ -25,6 +25,14 @@ jobs:
             src/laser_state_machine.cpp tests/state_machine_test.cpp \
             -o /tmp/stagelaser-state-machine-test
           /tmp/stagelaser-state-machine-test
+      - name: Test StageLaser transaction controller
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            src/laser_state_machine.cpp src/laser_controller.cpp \
+            tests/laser_controller_test.cpp \
+            -o /tmp/stagelaser-controller-test
+          /tmp/stagelaser-controller-test
       - name: Test Wi-Fi reconnect policy
         run: |
           set -euo pipefail
