@@ -98,6 +98,45 @@ int main() {
     StateMachine m;
     m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
     assert(m.CommandArm(0).result == ResultCode::kAccepted);
+    assert(m.CommandSetOn(1).actuator == ActuatorAction::kPick);
+    release(m, 181);
+    assert(m.logical_state() == LogicalState::kOn);
+
+    auto disarm = m.CommandDisarm(200);
+    assert(disarm.result == ResultCode::kAccepted);
+    assert(disarm.actuator == ActuatorAction::kNone);
+    assert(m.arm_state() == ArmState::kDisarmed);
+    assert(m.safe_off_pending());
+    assert(m.Tick(430).actuator == ActuatorAction::kNone);
+    auto deferred_off = m.Tick(431);
+    assert(deferred_off.actuator == ActuatorAction::kPick);
+    release(m, 611);
+    assert(m.logical_state() == LogicalState::kOff);
+    assert(!m.safe_off_pending());
+    assert(m.relay_pulse_count() == 2);
+  }
+
+  {
+    StateMachine m;
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
+    assert(m.CommandArm(0).result == ResultCode::kAccepted);
+    assert(m.CommandSetOn(1).actuator == ActuatorAction::kPick);
+    auto safe = m.CommandSafeOff(50);
+    assert(safe.result == ResultCode::kAccepted);
+    assert(m.safe_off_pending());
+    release(m, 181);
+    assert(m.logical_state() == LogicalState::kOn);
+    assert(m.safe_off_pending());
+    assert(m.Tick(431).actuator == ActuatorAction::kPick);
+    release(m, 611);
+    assert(m.logical_state() == LogicalState::kOff);
+    assert(!m.safe_off_pending());
+  }
+
+  {
+    StateMachine m;
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
+    assert(m.CommandArm(0).result == ResultCode::kAccepted);
     auto bad = m.CommandFlashStart(0, FlashRequest{2.0, 8000});
     assert(bad.result == ResultCode::kRejectedLimits);
     assert(m.relay_pulse_count() == 0);
