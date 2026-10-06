@@ -5,11 +5,13 @@ idf_component_register(
     "device_identity.cpp"
     "laser_state_machine.cpp"
     "network_station.cpp"
+    "provisioning.cpp"
     "relay_output.cpp"
   INCLUDE_DIRS "."
   REQUIRES
     driver
     esp_event
+    esp_http_server
     esp_netif
     esp_timer
     esp_wifi

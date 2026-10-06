@@ -1,3 +1,5 @@
+#include <string>
+
 #include "config_store.h"
 #include "device_identity.h"
 #include "esp_log.h"
@@ -5,6 +7,7 @@
 #include "freertos/task.h"
 #include "network_station.h"
 #include "nvs_flash.h"
+#include "provisioning.h"
 #include "relay_output.h"
 
 #ifndef STAGECORE_FW_VERSION
@@ -31,6 +34,13 @@ void init_nvs() {
   ESP_LOGE(kTag, "safe failure: %s", reason);
   while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
+
+std::string default_display_name(const std::string &device_id) {
+  if (device_id.size() >= 6) {
+    return "StageLaser-" + device_id.substr(device_id.size() - 6);
+  }
+  return "StageLaser";
+}
 }  // namespace
 
 extern "C" void app_main(void) {
@@ -51,10 +61,8 @@ extern "C" void app_main(void) {
     hold_safe_failure("configuration storage unavailable");
   }
   if (!config.complete()) {
-    ESP_LOGW(kTag,
-             "Stage LAN configuration incomplete; provisioning is not installed "
-             "in this slice; relay remains NO-ACTUATION");
-    return;
+    stagecore::run_provisioning_portal(
+        identity.device_id(), default_display_name(identity.device_id()));
   }
 
   const esp_err_t network =
@@ -70,6 +78,6 @@ extern "C" void app_main(void) {
   }
 
   ESP_LOGW(kTag,
-           "Wi-Fi station slice only; Hub runtime still disabled; relay "
+           "provisioning/Wi-Fi slices only; Hub runtime still disabled; relay "
            "remains NO-ACTUATION");
 }
