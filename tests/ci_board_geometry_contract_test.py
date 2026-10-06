@@ -9,6 +9,8 @@ class CIBoardGeometryContract(unittest.TestCase):
         self.assertIn("CI-only generic board geometry", ini)
         self.assertIn("NOT a StageLaser hardware qualification", ini)
         self.assertIn("partitions-ci-4mb.csv", ini)
+        sdk = (ROOT / "sdkconfig.defaults").read_text()
+        self.assertIn("CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y", sdk)
 
     def test_ci_partition_has_room_for_trust_stack(self):
         csv = (ROOT / "partitions-ci-4mb.csv").read_text()
