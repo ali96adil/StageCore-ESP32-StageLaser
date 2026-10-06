@@ -2,3 +2,14 @@
 build/
 .vscode/
 .DS_Store
+
+# ESP-IDF / PlatformIO generated state.
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+sdkconfig.*
+!sdkconfig.defaults
+
+# Optional repo-local PlatformIO virtual environment.
+.venv-pio/
