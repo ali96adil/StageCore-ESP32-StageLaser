@@ -25,16 +25,31 @@ Implemented software layers:
 17. bounded same-session command result dedupe
 18. persistent 32-entry SHA-256 actuation replay fence written before controller execution
 
+## Verified physical board
+
+The actual StageLaser controller board was queried directly over native USB with esptool 5.2.0.
+
+Verified facts:
+- ESP32-C3 QFN32
+- silicon revision v0.4
+- embedded XMC 4 MB flash
+- 40 MHz crystal
+- USB mode: USB-Serial/JTAG
+- Secure Boot disabled on the qualification unit
+- Flash Encryption disabled on the qualification unit
+
+The device MAC is intentionally not recorded in the public repository.
+
 ## Deliberately not qualified yet
 
-These require the real hardware and must not be guessed:
+These still require the relay / electrical hardware and must not be guessed:
 
 - physical relay GPIO
 - relay active polarity
 - relay module 3.3 V electrical compatibility
 - boot/reset inactive electrical behavior
 - shared-power qualification
-- actual flash size and production partition map
+- production partition map
 - OTA layout
 - physical local-recovery button GPIO
 
@@ -45,7 +60,11 @@ The current firmware build remains NO-ACTUATION.
 Run these in order after the exact ESP32-C3 Super Mini and relay module are available.
 
 ### 1. Visual and electrical identification
-- photograph both sides of the ESP32-C3 Super Mini
+Board identity: **PASS**
+- actual ESP32-C3 Super Mini photographed
+- chip/flash/crystal/USB mode read directly with esptool
+
+Relay identification: **PENDING**
 - photograph relay board front/back and all markings
 - identify VCC / GND / IN and COM / NO / NC
 - confirm relay input voltage/current and isolation/transistor topology
@@ -111,7 +130,7 @@ Run these in order after the exact ESP32-C3 Super Mini and relay module are avai
 - attended resync flow
 
 ### 10. Production update and recovery path
-- confirm real flash size
+- real flash capacity: **4 MB verified**
 - define OTA partitions
 - qualify the controlled OTA path
 - choose/qualify a physical local-recovery/trust-reset input if required
