@@ -1,0 +1,53 @@
+name: Firmware CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stagelaser-firmware-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test pure StageLaser state machine
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            src/laser_state_machine.cpp tests/state_machine_test.cpp \
+            -o /tmp/stagelaser-state-machine-test
+          /tmp/stagelaser-state-machine-test
+      - name: Verify no raw toggle and no-actuation default
+        run: python -m unittest discover -s tests -p '*_test.py' -v
+
+  firmware-build-no-actuation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio==6.2.0
+      - name: Build CI no-actuation image
+        run: pio run -e esp32c3-ci-no-actuation
+      - name: Prove artifact is no-actuation
+        run: |
+          set -euo pipefail
+          grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0' platformio.ini
+          grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1' platformio.ini
+          test -f .pio/build/esp32c3-ci-no-actuation/firmware.bin
