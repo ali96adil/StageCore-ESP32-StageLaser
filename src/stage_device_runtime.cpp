@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -16,6 +18,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "laser_command_contract.h"
 #include "laser_observation.h"
 
 #ifndef STAGECORE_FW_VERSION
@@ -37,6 +40,8 @@ constexpr EventBits_t kAssignmentBit = BIT1;
 constexpr EventBits_t kPrepareBit = BIT2;
 constexpr EventBits_t kDisconnectedBit = BIT3;
 constexpr EventBits_t kProtocolErrorBit = BIT4;
+constexpr EventBits_t kRuntimeReadyBit = BIT5;
+constexpr EventBits_t kCommandBit = BIT6;
 
 struct PrepareRequest {
   bool present = false;
@@ -46,6 +51,28 @@ struct PrepareRequest {
   std::string challenge;
   std::string target_project_id;
   std::string target_runtime_snapshot_id;
+};
+
+enum class PendingGoal {
+  kNone,
+  kOn,
+  kOff,
+  kSafeOff,
+  kFlashStarted,
+};
+
+struct RuntimeCommandState {
+  bool pending = false;
+  bool controller_faulted = false;
+  PendingGoal goal = PendingGoal::kNone;
+  std::string command_id;
+  std::string command_type;
+  std::string response_command_id;
+  stagelaser::FlashObservationInfo flash;
+  std::string last_accepted_command_id;
+  std::string last_applied_command_id;
+  std::string last_command_type;
+  std::string last_command_result;
 };
 
 struct RuntimeContext {
@@ -63,6 +90,10 @@ struct RuntimeContext {
   std::string runtime_snapshot_id;
 
   PrepareRequest pending_prepare;
+  bool commands_enabled = false;
+  bool runtime_ready_received = false;
+  std::vector<std::string> pending_command_frames;
+  stagelaser::CommandJournal journal;
 };
 
 bool exact_positive_integer(const cJSON *root, const char *key, int64_t *out) {
@@ -122,7 +153,8 @@ const char *reset_reason_text() {
   }
 }
 
-stagelaser::ObservationMetadata make_observation_metadata() {
+stagelaser::ObservationMetadata make_observation_metadata(
+    const RuntimeCommandState *commands = nullptr) {
   stagelaser::ObservationMetadata metadata;
   metadata.firmware_version = STAGECORE_FW_VERSION;
   metadata.uptime_seconds = esp_timer_get_time() / 1000000LL;
@@ -132,6 +164,13 @@ stagelaser::ObservationMetadata make_observation_metadata() {
   if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
     metadata.has_wifi_rssi = true;
     metadata.wifi_rssi_dbm = ap.rssi;
+  }
+  if (commands != nullptr) {
+    metadata.flash = commands->flash;
+    metadata.last_accepted_command_id = commands->last_accepted_command_id;
+    metadata.last_applied_command_id = commands->last_applied_command_id;
+    metadata.last_command_type = commands->last_command_type;
+    metadata.last_command_result = commands->last_command_result;
   }
   return metadata;
 }
@@ -214,16 +253,18 @@ std::string make_hello(const VerifiedHub &hub,
 
 std::string make_observation(const VerifiedHub &hub,
                              const std::string &device_id,
-                             const stagelaser::LaserController &laser) {
+                             const stagelaser::LaserController &laser,
+                             const RuntimeCommandState *commands,
+                             bool ready) {
   cJSON *root = cJSON_CreateObject();
   if (root == nullptr) return {};
   cJSON_AddStringToObject(root, "type", "device.observation");
   cJSON_AddNumberToObject(root, "schema_version", 2);
   cJSON_AddStringToObject(root, "device_id", device_id.c_str());
-  cJSON_AddStringToObject(root, "readiness", "BLOCKER");
+  cJSON_AddStringToObject(root, "readiness", ready ? "READY" : "BLOCKER");
 
   cJSON *observed = stagelaser::make_observed_state_json(
-      laser.machine(), make_observation_metadata());
+      laser.machine(), make_observation_metadata(commands));
   cJSON *network = network_state_json(hub);
   if (observed == nullptr || network == nullptr) {
     if (observed != nullptr) cJSON_Delete(observed);
@@ -348,6 +389,58 @@ bool parse_prepare(RuntimeContext *context, const cJSON *root) {
   return true;
 }
 
+bool parse_runtime_ready(RuntimeContext *context, const cJSON *root) {
+  if (context == nullptr || !context->assignment_received ||
+      context->assignment_state != "ACTIVE" ||
+      context->runtime_ready_received) {
+    return false;
+  }
+
+  std::string protocol;
+  std::string project;
+  std::string snapshot;
+  int64_t epoch = 0;
+  int64_t generation = 0;
+  const cJSON *commands =
+      cJSON_GetObjectItemCaseSensitive(root, "commands_enabled");
+  if (!nonempty_string(root, "protocol_version", &protocol) ||
+      protocol != kProtocolVersion ||
+      !nonempty_string(root, "project_id", &project) ||
+      !nonempty_string(root, "runtime_snapshot_id", &snapshot) ||
+      !exact_positive_integer(root, "assignment_epoch", &epoch) ||
+      !exact_positive_integer(root, "connection_generation", &generation) ||
+      !cJSON_IsTrue(commands) ||
+      project != context->project_id ||
+      snapshot != context->runtime_snapshot_id ||
+      epoch != context->assignment_epoch ||
+      generation != context->connection_generation) {
+    return false;
+  }
+
+  context->runtime_ready_received = true;
+  context->commands_enabled = true;
+  xEventGroupSetBits(context->events, kRuntimeReadyBit);
+  return true;
+}
+
+bool queue_command(RuntimeContext *context, const std::string &text) {
+  if (context == nullptr || !context->commands_enabled ||
+      context->lock == nullptr || text.empty()) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    return false;
+  }
+  bool accepted = false;
+  if (context->pending_command_frames.size() < 8) {
+    context->pending_command_frames.push_back(text);
+    accepted = true;
+  }
+  xSemaphoreGive(context->lock);
+  if (accepted) xEventGroupSetBits(context->events, kCommandBit);
+  return accepted;
+}
+
 bool handle_complete_text(RuntimeContext *context, const std::string &text) {
   cJSON *root = cJSON_ParseWithLength(text.data(), text.size());
   if (root == nullptr) return false;
@@ -366,9 +459,11 @@ bool handle_complete_text(RuntimeContext *context, const std::string &text) {
              std::strcmp(type->valuestring,
                          "stagelaser.assignment.prepare") == 0) {
     ok = parse_prepare(context, root);
+  } else if (ok && std::strcmp(type->valuestring, "runtime.ready") == 0) {
+    ok = parse_runtime_ready(context, root);
+  } else if (ok && std::strcmp(type->valuestring, "command.execute") == 0) {
+    ok = queue_command(context, text);
   } else {
-    // Assignment-only slice: no scope acknowledgement and no command
-    // execution authority is accepted here.
     ok = false;
   }
 
@@ -458,6 +553,24 @@ bool take_prepare(RuntimeContext *context, PrepareRequest *request) {
   return present;
 }
 
+bool take_command(RuntimeContext *context, std::string *frame) {
+  if (context == nullptr || frame == nullptr || context->lock == nullptr) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    return false;
+  }
+  const bool present = !context->pending_command_frames.empty();
+  if (present) {
+    *frame = std::move(context->pending_command_frames.front());
+    context->pending_command_frames.erase(context->pending_command_frames.begin());
+  }
+  const bool more = !context->pending_command_frames.empty();
+  xSemaphoreGive(context->lock);
+  if (!more) xEventGroupClearBits(context->events, kCommandBit);
+  return present;
+}
+
 bool known_safe_off(const stagelaser::LaserController &laser) {
   const auto &m = laser.machine();
   return m.arm_state() == stagelaser::ArmState::kDisarmed &&
@@ -527,9 +640,428 @@ std::string make_safe_ack(const VerifiedHub &hub,
   return out;
 }
 
+std::string make_scope_ack(const VerifiedHub &hub,
+                           const RuntimeContext &context,
+                           const stagelaser::LaserController &laser) {
+  if (context.assignment_state != "ACTIVE" ||
+      context.project_id.empty() || context.runtime_snapshot_id.empty() ||
+      !known_safe_off(laser)) {
+    return {};
+  }
+  cJSON *root = cJSON_CreateObject();
+  if (root == nullptr) return {};
+  cJSON_AddStringToObject(root, "type", "stagelaser.assignment.scope_ack");
+  cJSON_AddNumberToObject(root, "schema_version", 2);
+  cJSON_AddStringToObject(root, "device_id", context.device_id.c_str());
+  cJSON_AddStringToObject(root, "project_id", context.project_id.c_str());
+  cJSON_AddStringToObject(root, "runtime_snapshot_id",
+                          context.runtime_snapshot_id.c_str());
+  cJSON_AddNumberToObject(root, "assignment_epoch",
+                          static_cast<double>(context.assignment_epoch));
+  cJSON_AddNumberToObject(root, "connection_generation",
+                          static_cast<double>(context.connection_generation));
+  cJSON_AddStringToObject(root, "readiness", "READY");
+
+  cJSON *observed = stagelaser::make_observed_state_json(
+      laser.machine(), make_observation_metadata());
+  cJSON *network = network_state_json(hub);
+  if (observed == nullptr || network == nullptr) {
+    if (observed != nullptr) cJSON_Delete(observed);
+    if (network != nullptr) cJSON_Delete(network);
+    cJSON_Delete(root);
+    return {};
+  }
+  cJSON_AddItemToObject(root, "observed_state", observed);
+  cJSON_AddItemToObject(root, "network_state", network);
+  const std::string result = print_json(root);
+  cJSON_Delete(root);
+  return result;
+}
+
+const char *arm_text(stagelaser::ArmState state) {
+  return state == stagelaser::ArmState::kArmed ? "ARMED" : "DISARMED";
+}
+
+const char *logical_text(stagelaser::LogicalState state) {
+  using stagelaser::LogicalState;
+  switch (state) {
+    case LogicalState::kOff: return "OFF";
+    case LogicalState::kTurningOn: return "TURNING_ON";
+    case LogicalState::kOn: return "ON";
+    case LogicalState::kTurningOff: return "TURNING_OFF";
+    case LogicalState::kFlashOn: return "FLASH_ON";
+    case LogicalState::kFlashOff: return "FLASH_OFF";
+    case LogicalState::kError: return "ERROR";
+    case LogicalState::kUnknown:
+    default: return "UNKNOWN";
+  }
+}
+
+const char *quality_text(stagelaser::StateQuality state) {
+  using stagelaser::StateQuality;
+  switch (state) {
+    case StateQuality::kTracked: return "TRACKED";
+    case StateQuality::kConfirmed: return "CONFIRMED";
+    case StateQuality::kUnknown:
+    default: return "UNKNOWN";
+  }
+}
+
+std::string state_result_payload(const stagelaser::LaserController &laser) {
+  const auto &m = laser.machine();
+  cJSON *root = cJSON_CreateObject();
+  if (root == nullptr) return {};
+  cJSON_AddStringToObject(root, "arm_state", arm_text(m.arm_state()));
+  cJSON_AddStringToObject(root, "logical_state", logical_text(m.logical_state()));
+  cJSON_AddStringToObject(root, "state_quality", quality_text(m.state_quality()));
+  cJSON_AddBoolToObject(root, "resync_required", m.resync_required());
+  cJSON_AddBoolToObject(root, "pulse_in_progress", m.pulse_in_progress());
+  cJSON_AddNumberToObject(root, "relay_pulse_count",
+                          static_cast<double>(m.relay_pulse_count()));
+  const std::string result = print_json(root);
+  cJSON_Delete(root);
+  return result;
+}
+
+std::string rejection_for_decision(
+    const std::string &device_id,
+    const std::string &command_id,
+    stagelaser::ResultCode result) {
+  using stagelaser::ResultCode;
+  switch (result) {
+    case ResultCode::kRejectedDisarmed:
+      return stagelaser::make_command_result(
+          device_id, command_id, "REJECTED", "LASER_NOT_ARMED", "SAFETY",
+          "StageLaser must be armed before this command", false);
+    case ResultCode::kRejectedUnknown:
+      return stagelaser::make_command_result(
+          device_id, command_id, "REJECTED", "LASER_STATE_UNKNOWN", "SAFETY",
+          "StageLaser logical state is unknown; resync is required", false);
+    case ResultCode::kRejectedBusy:
+      return stagelaser::make_command_result(
+          device_id, command_id, "REJECTED", "LASER_BUSY", "RUNTIME",
+          "StageLaser is busy with another transition", true);
+    case ResultCode::kRejectedLimits:
+      return stagelaser::make_command_result(
+          device_id, command_id, "REJECTED", "LASER_COMMAND_INVALID",
+          "VALIDATION", "StageLaser command exceeds configured limits", false);
+    case ResultCode::kRejectedUnsafe:
+      return stagelaser::make_command_result(
+          device_id, command_id, "REJECTED", "LASER_STATE_UNSAFE", "SAFETY",
+          "StageLaser cannot prove a deterministic safe transition", false);
+    default:
+      return {};
+  }
+}
+
+std::string failure_for_fault(
+    const std::string &device_id,
+    const std::string &command_id,
+    stagelaser::ControllerFault fault) {
+  const char *message = "StageLaser controller failed";
+  const char *category = "RUNTIME";
+  switch (fault) {
+    case stagelaser::ControllerFault::kPersistence:
+      message = "StageLaser could not persist physical truth before actuation";
+      category = "PERSISTENCE";
+      break;
+    case stagelaser::ControllerFault::kActuatorPick:
+      message = "StageLaser relay contact could not be asserted";
+      category = "HARDWARE";
+      break;
+    case stagelaser::ControllerFault::kActuatorRelease:
+      message = "StageLaser relay contact release could not be confirmed";
+      category = "HARDWARE";
+      break;
+    case stagelaser::ControllerFault::kNone:
+      return {};
+  }
+  return stagelaser::make_command_result(
+      device_id, command_id, "FAILED", "LASER_STATE_UNSAFE",
+      category, message, false);
+}
+
+void mark_result(RuntimeCommandState *state,
+                 const stagelaser::CommandEnvelope &command,
+                 const char *status,
+                 bool applied) {
+  if (state == nullptr) return;
+  state->last_command_type = command.command_type;
+  state->last_command_result = status != nullptr ? status : "";
+  if (status != nullptr &&
+      (std::strcmp(status, "ACCEPTED") == 0 ||
+       std::strcmp(status, "COMPLETED") == 0)) {
+    state->last_accepted_command_id = command.command_id;
+  }
+  if (applied) state->last_applied_command_id = command.command_id;
+}
+
+bool parse_flash_payload(const std::string &payload_json,
+                         stagelaser::FlashRequest *request) {
+  if (request == nullptr) return false;
+  cJSON *root = cJSON_ParseWithLength(payload_json.data(), payload_json.size());
+  if (root == nullptr) return false;
+  const cJSON *frequency = cJSON_GetObjectItemCaseSensitive(root, "frequency_hz");
+  const cJSON *duration = cJSON_GetObjectItemCaseSensitive(root, "duration_ms");
+  const bool ok = cJSON_IsNumber(frequency) && cJSON_IsNumber(duration) &&
+                  std::isfinite(frequency->valuedouble) &&
+                  std::isfinite(duration->valuedouble) &&
+                  duration->valuedouble == std::floor(duration->valuedouble);
+  if (ok) {
+    request->frequency_hz = frequency->valuedouble;
+    request->duration_ms = static_cast<uint32_t>(duration->valuedouble);
+  }
+  cJSON_Delete(root);
+  return ok;
+}
+
+bool parse_resync_payload(const std::string &payload_json, bool *target_on) {
+  if (target_on == nullptr) return false;
+  cJSON *root = cJSON_ParseWithLength(payload_json.data(), payload_json.size());
+  if (root == nullptr) return false;
+  const cJSON *state = cJSON_GetObjectItemCaseSensitive(root, "state");
+  bool ok = cJSON_IsString(state) && state->valuestring != nullptr;
+  if (ok && std::strcmp(state->valuestring, "ON") == 0) {
+    *target_on = true;
+  } else if (ok && std::strcmp(state->valuestring, "OFF") == 0) {
+    *target_on = false;
+  } else {
+    ok = false;
+  }
+  cJSON_Delete(root);
+  return ok;
+}
+
+bool known_on(const stagelaser::LaserController &laser) {
+  const auto &m = laser.machine();
+  return m.logical_state() == stagelaser::LogicalState::kOn &&
+         !m.pulse_in_progress() && !m.resync_required();
+}
+
+bool known_off(const stagelaser::LaserController &laser) {
+  const auto &m = laser.machine();
+  return m.logical_state() == stagelaser::LogicalState::kOff &&
+         !m.pulse_in_progress() && !m.flash_active() &&
+         !m.resync_required();
+}
+
+std::string start_ready_command(
+    const stagelaser::CommandEnvelope &command,
+    const std::string &device_id,
+    stagelaser::LaserController *laser,
+    RuntimeCommandState *state,
+    uint64_t now_ms) {
+  if (laser == nullptr || state == nullptr) return {};
+  if (state->pending) {
+    mark_result(state, command, "REJECTED", false);
+    return stagelaser::make_command_result(
+        device_id, command.command_id, "REJECTED", "LASER_BUSY", "RUNTIME",
+        "StageLaser already has a command awaiting a stable output state", true);
+  }
+
+  stagelaser::ControllerOutcome outcome{};
+  bool has_outcome = true;
+  PendingGoal goal = PendingGoal::kNone;
+
+  if (command.command_type == "LASER_ARM") {
+    outcome = laser->Arm(now_ms);
+  } else if (command.command_type == "LASER_DISARM") {
+    outcome = laser->Disarm(now_ms);
+    goal = PendingGoal::kSafeOff;
+  } else if (command.command_type == "LASER_SET_ON") {
+    outcome = laser->SetOn(now_ms);
+    goal = PendingGoal::kOn;
+  } else if (command.command_type == "LASER_SET_OFF") {
+    outcome = laser->SetOff(now_ms);
+    goal = PendingGoal::kOff;
+  } else if (command.command_type == "LASER_FLASH_START") {
+    stagelaser::FlashRequest request;
+    if (!parse_flash_payload(command.payload_json, &request)) {
+      mark_result(state, command, "REJECTED", false);
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "REJECTED",
+          "LASER_COMMAND_INVALID", "VALIDATION",
+          "Flash payload could not be decoded", false);
+    }
+    outcome = laser->FlashStart(now_ms, request);
+    goal = PendingGoal::kFlashStarted;
+    if (outcome.fault == stagelaser::ControllerFault::kNone &&
+        (outcome.decision.result == stagelaser::ResultCode::kAccepted ||
+         outcome.decision.result == stagelaser::ResultCode::kNoop)) {
+      state->flash.active = true;
+      state->flash.command_id = command.command_id;
+      state->flash.frequency_hz = request.frequency_hz;
+      state->flash.duration_ms = request.duration_ms;
+    }
+  } else if (command.command_type == "LASER_FLASH_STOP") {
+    outcome = laser->FlashStop(now_ms);
+    goal = PendingGoal::kOff;
+  } else if (command.command_type == "LASER_SAFE_OFF") {
+    outcome = laser->SafeOff(now_ms);
+    goal = PendingGoal::kSafeOff;
+  } else if (command.command_type == "LASER_STATE_RESYNC") {
+    bool target_on = false;
+    if (!parse_resync_payload(command.payload_json, &target_on)) {
+      mark_result(state, command, "REJECTED", false);
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "REJECTED",
+          "LASER_COMMAND_INVALID", "VALIDATION",
+          "Resync payload could not be decoded", false);
+    }
+    outcome = target_on ? laser->ResyncOn() : laser->ResyncOff();
+  } else if (command.command_type == "LASER_STATE_READ") {
+    has_outcome = false;
+  } else {
+    mark_result(state, command, "REJECTED", false);
+    return stagelaser::make_command_result(
+        device_id, command.command_id, "REJECTED",
+        "LASER_COMMAND_INVALID", "VALIDATION",
+        "Unsupported StageLaser command", false);
+  }
+
+  if (has_outcome && outcome.fault != stagelaser::ControllerFault::kNone) {
+    state->flash.active = false;
+    mark_result(state, command, "FAILED", false);
+    return failure_for_fault(device_id, command.command_id, outcome.fault);
+  }
+
+  if (has_outcome &&
+      outcome.decision.result != stagelaser::ResultCode::kAccepted &&
+      outcome.decision.result != stagelaser::ResultCode::kNoop) {
+    if (command.command_type == "LASER_FLASH_START") {
+      state->flash = stagelaser::FlashObservationInfo{};
+    }
+    mark_result(state, command, "REJECTED", false);
+    return rejection_for_decision(
+        device_id, command.command_id, outcome.decision.result);
+  }
+
+  bool complete = false;
+  if (command.command_type == "LASER_ARM") {
+    complete = laser->machine().arm_state() == stagelaser::ArmState::kArmed;
+  } else if (command.command_type == "LASER_DISARM" ||
+             command.command_type == "LASER_SAFE_OFF") {
+    complete = known_safe_off(*laser);
+  } else if (command.command_type == "LASER_SET_ON") {
+    complete = known_on(*laser);
+  } else if (command.command_type == "LASER_SET_OFF" ||
+             command.command_type == "LASER_FLASH_STOP") {
+    complete = known_off(*laser);
+  } else if (command.command_type == "LASER_FLASH_START") {
+    complete = laser->machine().flash_active() &&
+               !laser->machine().pulse_in_progress();
+  } else if (command.command_type == "LASER_STATE_READ" ||
+             command.command_type == "LASER_STATE_RESYNC") {
+    complete = true;
+  }
+
+  if (complete) {
+    if (command.command_type == "LASER_FLASH_STOP") {
+      state->flash = stagelaser::FlashObservationInfo{};
+    }
+    mark_result(state, command, "COMPLETED", true);
+    const std::string payload =
+        command.command_type == "LASER_STATE_READ"
+            ? state_result_payload(*laser)
+            : "{}";
+    return stagelaser::make_command_result(
+        device_id, command.command_id, "COMPLETED",
+        nullptr, nullptr, nullptr, false, payload);
+  }
+
+  state->pending = true;
+  state->goal = goal;
+  state->command_id = command.command_id;
+  state->command_type = command.command_type;
+  mark_result(state, command, "ACCEPTED", false);
+  return stagelaser::make_command_result(
+      device_id, command.command_id, "ACCEPTED");
+}
+
+std::string poll_runtime_command(
+    const std::string &device_id,
+    stagelaser::LaserController *laser,
+    RuntimeCommandState *state,
+    uint64_t now_ms) {
+  if (laser == nullptr || state == nullptr) return {};
+  state->response_command_id.clear();
+
+  const stagelaser::ControllerOutcome outcome = laser->Poll(now_ms);
+  if (outcome.fault != stagelaser::ControllerFault::kNone) {
+    state->controller_faulted = true;
+    state->flash = stagelaser::FlashObservationInfo{};
+    if (!state->pending) return {};
+    const std::string command_id = state->command_id;
+    stagelaser::CommandEnvelope command;
+    command.command_id = state->command_id;
+    command.command_type = state->command_type;
+    state->pending = false;
+    state->goal = PendingGoal::kNone;
+    state->response_command_id = command_id;
+    mark_result(state, command, "FAILED", false);
+    return failure_for_fault(device_id, command_id, outcome.fault);
+  }
+
+  if (state->flash.active && !laser->machine().flash_active()) {
+    state->flash = stagelaser::FlashObservationInfo{};
+  }
+  if (!state->pending) return {};
+
+  if (laser->machine().resync_required()) {
+    stagelaser::CommandEnvelope command;
+    command.command_id = state->command_id;
+    command.command_type = state->command_type;
+    const std::string command_id = state->command_id;
+    state->pending = false;
+    state->goal = PendingGoal::kNone;
+    state->flash = stagelaser::FlashObservationInfo{};
+    state->response_command_id = command_id;
+    mark_result(state, command, "FAILED", false);
+    return stagelaser::make_command_result(
+        device_id, command_id, "FAILED", "LASER_STATE_UNSAFE", "SAFETY",
+        "StageLaser state became unknown while applying the command", false);
+  }
+
+  bool complete = false;
+  switch (state->goal) {
+    case PendingGoal::kOn:
+      complete = known_on(*laser);
+      break;
+    case PendingGoal::kOff:
+      complete = known_off(*laser);
+      break;
+    case PendingGoal::kSafeOff:
+      complete = known_safe_off(*laser);
+      break;
+    case PendingGoal::kFlashStarted:
+      complete = laser->machine().flash_active() &&
+                 !laser->machine().pulse_in_progress();
+      break;
+    case PendingGoal::kNone:
+      break;
+  }
+  if (!complete) return {};
+
+  stagelaser::CommandEnvelope command;
+  command.command_id = state->command_id;
+  command.command_type = state->command_type;
+  const std::string command_id = state->command_id;
+  const bool stop_flash = state->command_type == "LASER_FLASH_STOP";
+  state->pending = false;
+  state->goal = PendingGoal::kNone;
+  state->command_id.clear();
+  state->command_type.clear();
+  state->response_command_id = command_id;
+  if (stop_flash) state->flash = stagelaser::FlashObservationInfo{};
+  mark_result(state, command, "COMPLETED", true);
+  return stagelaser::make_command_result(
+      device_id, command_id, "COMPLETED",
+      nullptr, nullptr, nullptr, false, "{}");
+}
+
 }  // namespace
 
-esp_err_t run_stage_device_assignment_runtime(
+esp_err_t run_stage_device_runtime(
     const VerifiedHub &hub,
     const RuntimeCredential &credential,
     const DeviceIdentity &identity,
@@ -620,6 +1152,27 @@ esp_err_t run_stage_device_assignment_runtime(
     }
   }
 
+  RuntimeCommandState command_state;
+
+  if (context.assignment_state == "ACTIVE") {
+    err = drive_safe_off(laser);
+    if (err != ESP_OK) goto cleanup;
+
+    err = send_text(client, make_scope_ack(hub, context, *laser));
+    if (err != ESP_OK) goto cleanup;
+
+    const EventBits_t ready_bits = xEventGroupWaitBits(
+        context.events,
+        kRuntimeReadyBit | kDisconnectedBit | kProtocolErrorBit,
+        pdFALSE, pdFALSE, pdMS_TO_TICKS(kReadyTimeoutMs));
+    if ((ready_bits & kRuntimeReadyBit) == 0) {
+      err = (ready_bits & kProtocolErrorBit)
+                ? ESP_ERR_INVALID_RESPONSE
+                : ESP_ERR_TIMEOUT;
+      goto cleanup;
+    }
+  }
+
   {
     int64_t last_observation_us = 0;
     while (true) {
@@ -643,21 +1196,78 @@ esp_err_t run_stage_device_assignment_runtime(
         if (err != ESP_OK) break;
       }
 
+      std::string command_frame;
+      if ((bits & kCommandBit) && take_command(&context, &command_frame)) {
+        stagelaser::CommandDecision decision;
+        const esp_err_t command_err =
+            stagelaser::evaluate_command_execute_frame(
+                command_frame, context.device_id, context.project_id,
+                context.runtime_snapshot_id, &context.journal, &decision);
+        if (command_err != ESP_OK) {
+          err = command_err;
+          break;
+        }
+
+        if (decision.disposition == stagelaser::CommandDisposition::kReady) {
+          const std::string response = start_ready_command(
+              decision.command, context.device_id, laser, &command_state,
+              esp_timer_get_time() / 1000ULL);
+          if (response.empty()) {
+            err = ESP_FAIL;
+            break;
+          }
+          context.journal.Remember(decision.command.command_id, response);
+          err = send_text(client, response);
+        } else {
+          err = send_text(client, decision.response_json);
+        }
+        if (err != ESP_OK) break;
+        last_observation_us = 0;
+      }
+
+      const uint64_t now_ms =
+          static_cast<uint64_t>(esp_timer_get_time() / 1000ULL);
+      const std::string terminal = poll_runtime_command(
+          context.device_id, laser, &command_state, now_ms);
+      if (!terminal.empty()) {
+        if (!command_state.response_command_id.empty()) {
+          context.journal.Remember(
+              command_state.response_command_id, terminal);
+        }
+        err = send_text(client, terminal);
+        if (err != ESP_OK) break;
+        last_observation_us = 0;
+      }
+      if (command_state.controller_faulted) {
+        err = ESP_ERR_INVALID_STATE;
+        break;
+      }
+
       const int64_t now_us = esp_timer_get_time();
       if (last_observation_us == 0 ||
           now_us - last_observation_us >=
               static_cast<int64_t>(kObservationPeriodMs) * 1000LL) {
-        err = send_text(client,
-                        make_observation(hub, context.device_id, *laser));
+        err = send_text(
+            client, make_observation(
+                        hub, context.device_id, *laser, &command_state,
+                        context.commands_enabled));
         if (err != ESP_OK) break;
         last_observation_us = now_us;
       }
 
-      vTaskDelay(pdMS_TO_TICKS(20));
+      vTaskDelay(pdMS_TO_TICKS(5));
     }
   }
 
 cleanup:
+  if (context.commands_enabled) {
+    const esp_err_t safe_err = drive_safe_off(laser);
+    if (safe_err != ESP_OK) {
+      ESP_LOGE(kTag,
+               "runtime ended and deterministic Safe Off could not be proven: %s",
+               esp_err_to_name(safe_err));
+    }
+  }
   if (client != nullptr) {
     (void)esp_websocket_client_stop(client);
     (void)esp_websocket_client_destroy(client);

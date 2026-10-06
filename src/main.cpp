@@ -148,16 +148,16 @@ extern "C" void app_main(void) {
     }
 
     ESP_LOGI(kTag,
-             "authenticated StageCore v2 assignment runtime starting");
+             "authenticated StageCore v2 runtime starting");
     const esp_err_t runtime_err =
-        stagecore::run_stage_device_assignment_runtime(
+        stagecore::run_stage_device_runtime(
             hub, credential, identity, config, &laser);
 
-    // The assignment-only slice never grants show-command authority. A
-    // reconnect is expected after an assignment commit because the Hub fences
-    // the old authenticated socket. Unknown physical state is never toggled.
+    // The Hub owns ACTIVE scope and command authority. Runtime exit clears the
+    // credential and the runtime itself attempts deterministic Safe Off only
+    // from known state; UNKNOWN is never blindly toggled.
     credential = stagecore::RuntimeCredential{};
-    ESP_LOGW(kTag, "Stage Device assignment runtime ended: %s",
+    ESP_LOGW(kTag, "Stage Device runtime ended: %s",
              esp_err_to_name(runtime_err));
     vTaskDelay(pdMS_TO_TICKS(2000));
   }

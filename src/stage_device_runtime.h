@@ -9,7 +9,7 @@
 
 namespace stagecore {
 
-esp_err_t run_stage_device_assignment_runtime(
+esp_err_t run_stage_device_runtime(
     const VerifiedHub &hub,
     const RuntimeCredential &credential,
     const DeviceIdentity &identity,
