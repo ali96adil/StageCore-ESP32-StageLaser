@@ -36,7 +36,7 @@ The firmware software stack is complete through the authenticated Stage Device v
 - connection-loss deterministic Safe Off
 - StageLaser observations for arm/logical state, quality, RSSI, uptime, pulse count and command diagnostics
 
-The default build remains deliberately **NO-ACTUATION** until the exact ESP32-C3 Super Mini and relay module are physically qualified.
+The default build remains deliberately **NO-ACTUATION**. The physical ESP32-C3 Super Mini board identity and flash geometry have now been verified; relay/GPIO/electrical qualification is still pending.
 
 ## Safety invariants
 
@@ -65,25 +65,32 @@ STAGECORE_LASER_OUTPUT_GPIO=-1
 STAGECORE_LASER_SHARED_POWER_QUALIFIED=0
 ```
 
-The current 4 MB partition table is **CI-only**. It is not a claim about the real Super Mini flash size or production OTA geometry.
+The physical StageLaser board has been verified with esptool as ESP32-C3 QFN32 rev v0.4 with embedded XMC 4 MB flash and a 40 MHz crystal. The current partition table is still **CI-only**; 4 MB capacity is real, but production OTA partition geometry is not qualified yet.
 
 ## Hardware gate
 
 Do not enable physical actuation until the exact board and relay module are inspected and tested.
 
-Qualification must establish:
+Verified board facts:
+- ESP32-C3 QFN32 revision v0.4
+- embedded XMC 4 MB flash
+- 40 MHz crystal
+- native USB-Serial/JTAG
+- Secure Boot disabled on the qualification unit
+- Flash Encryption disabled on the qualification unit
 
-1. exact ESP32-C3 Super Mini revision and flash size
-2. safe output GPIO
-3. relay/input polarity
-4. 3.3 V logic compatibility
-5. boot/reset GPIO level never closes the contact
-6. dry-contact wiring across the original laser button
-7. ESP32 vs laser power-domain relationship
-8. real cold-power behavior: laser physically starts OFF
-9. pulse-width and minimum-rest behavior on the real relay
-10. production flash / OTA partition geometry
-11. a safe physical local-recovery input if one is added
+Qualification still must establish:
+
+1. safe output GPIO
+2. relay/input polarity
+3. 3.3 V logic compatibility
+4. boot/reset GPIO level never closes the contact
+5. dry-contact wiring across the original laser button
+6. ESP32 vs laser power-domain relationship
+7. real cold-power behavior: laser physically starts OFF
+8. pulse-width and minimum-rest behavior on the real relay
+9. production flash / OTA partition geometry
+10. a safe physical local-recovery input if one is added
 
 Only after that gate may a hardware environment set actuation enabled.
 
