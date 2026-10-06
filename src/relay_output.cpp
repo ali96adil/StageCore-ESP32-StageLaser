@@ -7,7 +7,7 @@
 #define STAGECORE_LASER_ACTUATION_ENABLED 0
 #endif
 #ifndef STAGECORE_LASER_OUTPUT_GPIO
-#define STAGECORE_LASER_OUTPUT_GPIO+ -1
+#define STAGECORE_LASER_OUTPUT_GPIO -1
 #endif
 
 namespace stagecore::stagelaser {
