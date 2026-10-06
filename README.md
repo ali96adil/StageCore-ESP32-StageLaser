@@ -95,3 +95,7 @@ Qualification still must establish:
 Only after that gate may a hardware environment set actuation enabled.
 
 See `docs/FIRMWARE_PLAN.md` for the acceptance sequence.
+
+## First hardware flash
+
+The first ESP32-C3 flash must use the NO-ACTUATION environment with the relay and laser disconnected. Follow `docs/FIRST_BOOT_QUALIFICATION.md` and validate the captured serial log with `tools/check_first_boot_log.py` before starting GPIO or relay qualification.
