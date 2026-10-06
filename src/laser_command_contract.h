@@ -23,6 +23,9 @@ struct CommandEnvelope {
   std::string priority;
   std::string idempotency_key;
   std::string payload_json;
+  double flash_frequency_hz = 0.0;
+  uint32_t flash_duration_ms = 0;
+  std::string resync_state;
   int64_t issued_at_unix_ms = 0;
   int64_t deadline_at_unix_ms = 0;
   bool has_deadline = false;

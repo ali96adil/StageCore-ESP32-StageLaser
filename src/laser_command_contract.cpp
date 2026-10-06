@@ -378,6 +378,20 @@ esp_err_t evaluate_command_execute_frame(
     return ESP_OK;
   }
 
+  if (parsed.command_type == "LASER_FLASH_START") {
+    const cJSON *frequency =
+        cJSON_GetObjectItemCaseSensitive(payload, "frequency_hz");
+    const cJSON *duration =
+        cJSON_GetObjectItemCaseSensitive(payload, "duration_ms");
+    parsed.flash_frequency_hz = frequency->valuedouble;
+    parsed.flash_duration_ms =
+        static_cast<uint32_t>(duration->valuedouble);
+  } else if (parsed.command_type == "LASER_STATE_RESYNC") {
+    const cJSON *state =
+        cJSON_GetObjectItemCaseSensitive(payload, "state");
+    parsed.resync_state = state->valuestring;
+  }
+
   char *payload_text = cJSON_PrintUnformatted(payload);
   if (payload_text == nullptr) {
     cJSON_Delete(root);

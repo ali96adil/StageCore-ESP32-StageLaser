@@ -33,6 +33,17 @@ jobs:
             tests/laser_controller_test.cpp \
             -o /tmp/stagelaser-controller-test
           /tmp/stagelaser-controller-test
+      - name: Test StageLaser command executor
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror \
+            -Itests/host_stubs -Isrc \
+            src/laser_state_machine.cpp \
+            src/laser_controller.cpp \
+            src/laser_command_executor.cpp \
+            tests/laser_command_executor_test.cpp \
+            -o /tmp/stagelaser-command-executor-test
+          /tmp/stagelaser-command-executor-test
       - name: Test Wi-Fi reconnect policy
         run: |
           set -euo pipefail
