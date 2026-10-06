@@ -9,6 +9,7 @@ idf_component_register(
     "network_station.cpp"
     "provisioning.cpp"
     "relay_output.cpp"
+    "trusted_clock.cpp"
   INCLUDE_DIRS "."
   REQUIRES
     driver
