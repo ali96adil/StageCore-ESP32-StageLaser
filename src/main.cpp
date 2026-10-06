@@ -85,17 +85,24 @@ extern "C" void app_main(void) {
     hold_safe_failure("laser state storage unavailable");
   }
 
+  const esp_reset_reason_t boot_reset_reason = esp_reset_reason();
+  const bool shared_power_qualified =
+      STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1;
+
   stagecore::stagelaser::NvsPersistentStateSink laser_store;
   stagecore::stagelaser::RelayOutputActuator laser_actuator;
   stagecore::stagelaser::LaserController laser(
-      persisted, classify_reset_reason(esp_reset_reason()),
-      STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1,
-      &laser_store, &laser_actuator);
+      persisted, classify_reset_reason(boot_reset_reason),
+      shared_power_qualified, &laser_store, &laser_actuator);
   if (!laser_store.Save(laser.machine().PersistentSnapshot())) {
     hold_safe_failure("unable to persist restored laser truth state");
   }
-  ESP_LOGI(kTag, "laser truth restored; persisted=%s resync_required=%s",
+  ESP_LOGI(kTag,
+           "laser truth restored; persisted=%s reset_reason=%d "
+           "shared_power_qualified=%s resync_required=%s",
            persisted_found ? "yes" : "no",
+           static_cast<int>(boot_reset_reason),
+           shared_power_qualified ? "yes" : "no",
            laser.machine().resync_required() ? "yes" : "no");
 
   stagecore::DeviceIdentity identity;
