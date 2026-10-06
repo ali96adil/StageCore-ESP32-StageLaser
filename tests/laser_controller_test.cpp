@@ -157,6 +157,32 @@ int main() {
   {
     FakeStore store;
     FakeRelay relay;
+    LaserController c(tracked(LogicalState::kOff),
+                      ResetClass::kSoftware, false, &store, &relay);
+    c.Arm(0);
+    assert(c.SetOn(1).decision.actuator == ActuatorAction::kPick);
+    assert(c.Poll(181).fault == ControllerFault::kNone);
+    assert(c.machine().logical_state() == LogicalState::kOn);
+
+    auto safe = c.SafeOff(200);
+    assert(safe.fault == ControllerFault::kNone);
+    assert(safe.decision.actuator == ActuatorAction::kNone);
+    assert(c.machine().safe_off_pending());
+    assert(relay.picks == 1);
+
+    assert(c.Poll(430).decision.actuator == ActuatorAction::kNone);
+    auto delayed = c.Poll(431);
+    assert(delayed.fault == ControllerFault::kNone);
+    assert(delayed.decision.actuator == ActuatorAction::kPick);
+    assert(relay.picks == 2);
+    assert(c.Poll(611).fault == ControllerFault::kNone);
+    assert(c.machine().logical_state() == LogicalState::kOff);
+    assert(!c.machine().safe_off_pending());
+  }
+
+  {
+    FakeStore store;
+    FakeRelay relay;
     LaserController c(PersistentState{}, ResetClass::kSoftware,
                       false, &store, &relay);
     assert(c.machine().logical_state() == LogicalState::kUnknown);

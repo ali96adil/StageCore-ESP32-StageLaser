@@ -32,6 +32,7 @@ class StateMachine {
   bool resync_required() const { return quality_ == StateQuality::kUnknown || logical_ == LogicalState::kUnknown || logical_ == LogicalState::kError; }
   bool pulse_in_progress() const { return pulse_in_progress_; }
   bool flash_active() const { return flash_active_; }
+  bool safe_off_pending() const { return safe_off_pending_; }
   uint64_t relay_pulse_count() const { return relay_pulse_count_; }
   PersistentState PersistentSnapshot() const;
   const Limits &limits() const { return limits_; }
@@ -59,6 +60,7 @@ class StateMachine {
 
   bool flash_active_ = false;
   bool flash_stop_requested_ = false;
+  bool safe_off_pending_ = false;
   uint64_t flash_end_ms_ = 0;
   uint64_t flash_next_edge_ms_ = 0;
   uint64_t flash_half_period_ms_ = 500;

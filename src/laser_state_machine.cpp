@@ -15,6 +15,7 @@ void StateMachine::Boot(const PersistentState &persisted, ResetClass reset,
   release_requested_ = false;
   flash_active_ = false;
   flash_stop_requested_ = false;
+  safe_off_pending_ = false;
 
   if (persisted.interrupted_transition || persisted.flash_session_in_progress) {
     logical_ = LogicalState::kUnknown;
@@ -63,7 +64,8 @@ LogicalState StateMachine::StableLogical() const { return KnownStableOn() ? Logi
 
 Decision StateMachine::CommandArm(uint64_t) {
   if (!KnownStable()) return {ResultCode::kRejectedUnknown, ActuatorAction::kNone};
-  if (pulse_in_progress_ || flash_active_) return {ResultCode::kRejectedBusy, ActuatorAction::kNone};
+  if (pulse_in_progress_ || flash_active_ || safe_off_pending_)
+    return {ResultCode::kRejectedBusy, ActuatorAction::kNone};
   if (arm_ == ArmState::kArmed) return {ResultCode::kNoop, ActuatorAction::kNone};
   arm_ = ArmState::kArmed;
   return {ResultCode::kAccepted, ActuatorAction::kNone};
@@ -129,19 +131,22 @@ Decision StateMachine::CommandFlashStop(uint64_t now_ms) {
 Decision StateMachine::CommandSafeOff(uint64_t now_ms) {
   arm_ = ArmState::kDisarmed;
   flash_stop_requested_ = true;
-  if (!KnownStable() && !pulse_in_progress_) return {ResultCode::kRejectedUnsafe, ActuatorAction::kNone};
   return RequestKnownOff(now_ms, true);
 }
 
 Decision StateMachine::CommandResyncOff() {
-  if (arm_ != ArmState::kDisarmed || pulse_in_progress_ || flash_active_) return {ResultCode::kRejectedBusy, ActuatorAction::kNone};
+  if (arm_ != ArmState::kDisarmed || pulse_in_progress_ || flash_active_ ||
+      safe_off_pending_)
+    return {ResultCode::kRejectedBusy, ActuatorAction::kNone};
   logical_ = LogicalState::kOff;
   quality_ = StateQuality::kTracked;
   return {ResultCode::kAccepted, ActuatorAction::kNone};
 }
 
 Decision StateMachine::CommandResyncOn() {
-  if (arm_ != ArmState::kDisarmed || pulse_in_progress_ || flash_active_) return {ResultCode::kRejectedBusy, ActuatorAction::kNone};
+  if (arm_ != ArmState::kDisarmed || pulse_in_progress_ || flash_active_ ||
+      safe_off_pending_)
+    return {ResultCode::kRejectedBusy, ActuatorAction::kNone};
   logical_ = LogicalState::kOn;
   quality_ = StateQuality::kTracked;
   return {ResultCode::kAccepted, ActuatorAction::kNone};
@@ -161,14 +166,25 @@ Decision StateMachine::BeginPulse(bool target_on, uint64_t now_ms, bool from_fla
 }
 
 Decision StateMachine::RequestKnownOff(uint64_t now_ms, bool) {
-  if (pulse_in_progress_) return {ResultCode::kAccepted, ActuatorAction::kNone};
-  if (!KnownStable()) return {ResultCode::kRejectedUnsafe, ActuatorAction::kNone};
+  if (pulse_in_progress_) {
+    safe_off_pending_ = true;
+    return {ResultCode::kAccepted, ActuatorAction::kNone};
+  }
+  if (!KnownStable()) {
+    safe_off_pending_ = false;
+    flash_stop_requested_ = false;
+    return {ResultCode::kRejectedUnsafe, ActuatorAction::kNone};
+  }
   if (KnownStableOff()) {
+    safe_off_pending_ = false;
     flash_active_ = false;
     flash_stop_requested_ = false;
     return {ResultCode::kNoop, ActuatorAction::kNone};
   }
-  if (now_ms < rest_until_ms_) return {ResultCode::kAccepted, ActuatorAction::kNone};
+  safe_off_pending_ = true;
+  if (now_ms < rest_until_ms_) {
+    return {ResultCode::kAccepted, ActuatorAction::kNone};
+  }
   return BeginPulse(false, now_ms, flash_active_);
 }
 
@@ -181,6 +197,24 @@ Decision StateMachine::Tick(uint64_t now_ms) {
     if (!release_requested_ && now_ms >= release_due_ms_) {
       release_requested_ = true;
       return {ResultCode::kAccepted, ActuatorAction::kRelease};
+    }
+    return {ResultCode::kAccepted, ActuatorAction::kNone};
+  }
+
+  if (safe_off_pending_) {
+    if (!KnownStable()) {
+      safe_off_pending_ = false;
+      return {ResultCode::kRejectedUnsafe, ActuatorAction::kNone};
+    }
+    if (KnownStableOff()) {
+      safe_off_pending_ = false;
+      flash_active_ = false;
+      flash_stop_requested_ = false;
+      logical_ = LogicalState::kOff;
+      return {ResultCode::kAccepted, ActuatorAction::kNone};
+    }
+    if (KnownStableOn() && now_ms >= rest_until_ms_) {
+      return BeginPulse(false, now_ms, flash_active_);
     }
     return {ResultCode::kAccepted, ActuatorAction::kNone};
   }
@@ -216,10 +250,19 @@ void StateMachine::ConfirmRelease(bool release_succeeded, uint64_t now_ms) {
     quality_ = StateQuality::kUnknown;
     flash_active_ = false;
     flash_stop_requested_ = false;
+    safe_off_pending_ = false;
     return;
   }
   logical_ = pending_target_on_ ? LogicalState::kOn : LogicalState::kOff;
   quality_ = StateQuality::kTracked;
+
+  if (!pending_target_on_ && safe_off_pending_) {
+    safe_off_pending_ = false;
+    flash_active_ = false;
+    flash_stop_requested_ = false;
+    logical_ = LogicalState::kOff;
+    return;
+  }
 
   if (pulse_from_flash_ && flash_active_) {
     logical_ = pending_target_on_ ? LogicalState::kFlashOn : LogicalState::kFlashOff;
