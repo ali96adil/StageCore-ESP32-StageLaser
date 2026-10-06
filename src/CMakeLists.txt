@@ -9,6 +9,7 @@ idf_component_register(
     "laser_observation.cpp"
     "laser_controller.cpp"
     "laser_controller_esp.cpp"
+    "laser_command_contract.cpp"
     "laser_state_store.cpp"
     "network_station.cpp"
     "provisioning.cpp"
