@@ -70,6 +70,7 @@ struct PersistentState {
   LogicalState stable_state = LogicalState::kUnknown;
   StateQuality quality = StateQuality::kUnknown;
   bool interrupted_transition = false;
+  bool flash_session_in_progress = false;
   uint64_t relay_pulse_count = 0;
 };
 

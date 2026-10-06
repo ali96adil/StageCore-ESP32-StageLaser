@@ -62,6 +62,16 @@ int main() {
     assert(start.actuator == ActuatorAction::kPick);
     release(m, 1180);
     assert(m.logical_state() == LogicalState::kFlashOn);
+
+    const PersistentState during_flash = m.PersistentSnapshot();
+    assert(during_flash.flash_session_in_progress);
+    StateMachine rebooted;
+    rebooted.Boot(during_flash);
+    assert(rebooted.arm_state() == ArmState::kDisarmed);
+    assert(rebooted.logical_state() == LogicalState::kUnknown);
+    assert(rebooted.CommandSafeOff(0).result == ResultCode::kRejectedUnsafe);
+    assert(rebooted.relay_pulse_count() == m.relay_pulse_count());
+
     auto edge = m.Tick(1680);
     assert(edge.actuator == ActuatorAction::kPick);
     release(m, 1860);
@@ -70,6 +80,7 @@ int main() {
     auto settle = m.Tick(2300);
     (void)settle;
     assert(!m.flash_active());
+    assert(!m.PersistentSnapshot().flash_session_in_progress);
     assert(m.PersistentSnapshot().stable_state == LogicalState::kOff);
   }
 

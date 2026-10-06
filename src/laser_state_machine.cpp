@@ -14,7 +14,7 @@ void StateMachine::Boot(const PersistentState &persisted) {
   release_requested_ = false;
   flash_active_ = false;
   flash_stop_requested_ = false;
-  if (persisted.interrupted_transition) {
+  if (persisted.interrupted_transition || persisted.flash_session_in_progress) {
     logical_ = LogicalState::kUnknown;
     quality_ = StateQuality::kUnknown;
     return;
@@ -220,6 +220,7 @@ PersistentState StateMachine::PersistentSnapshot() const {
   PersistentState out;
   out.relay_pulse_count = relay_pulse_count_;
   out.interrupted_transition = pulse_in_progress_;
+  out.flash_session_in_progress = flash_active_;
   if (pulse_in_progress_) {
     out.stable_state = LogicalState::kUnknown;
     out.quality = StateQuality::kUnknown;
