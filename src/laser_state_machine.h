@@ -9,7 +9,8 @@ class StateMachine {
  public:
   explicit StateMachine(Limits limits = {});
 
-  void Boot(const PersistentState &persisted);
+  void Boot(const PersistentState &persisted, ResetClass reset,
+            bool shared_power_qualified);
   Decision CommandArm(uint64_t now_ms);
   Decision CommandDisarm(uint64_t now_ms);
   Decision CommandSetOn(uint64_t now_ms);

@@ -25,6 +25,7 @@ enum class LogicalState {
   kError,
 };
 enum class StateQuality { kTracked, kConfirmed, kUnknown };
+enum class ResetClass { kSoftware, kWatchdog, kPowerOn, kBrownout, kUnknown };
 enum class Command {
   kArm,
   kDisarm,
