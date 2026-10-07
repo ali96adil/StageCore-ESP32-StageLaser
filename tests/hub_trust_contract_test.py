@@ -22,6 +22,13 @@ class HubTrustContract(unittest.TestCase):
         self.assertNotIn("lighting.", source)
         self.assertIn('"architecture", "riscv32"', source)
 
+    def test_partial_hub_trust_fails_closed(self):
+        source = (ROOT / "src" / "config_store.cpp").read_text()
+        self.assertIn("present_count == 0", source)
+        self.assertIn("present_count != 3 || !loaded.complete()", source)
+        self.assertIn("ESP_ERR_INVALID_STATE", source)
+        self.assertIn("silently bind to a different Hub", source)
+
     def test_trust_path_has_no_project_authority_or_laser_command_endpoint(self):
         text = "\n".join([
             (ROOT / "src" / "hub_discovery.cpp").read_text(),
