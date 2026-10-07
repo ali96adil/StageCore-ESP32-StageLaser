@@ -17,7 +17,7 @@ class ProvisioningContract(unittest.TestCase):
 
         self.assertIn("WIFI_AUTH_WPA2_PSK", source)
         self.assertIn('#define STAGECORE_SETUP_AP_PASSWORD "12345678"', source)
-        self.assertIn("effective_setup_ap_password", source)
+        self.assertIn("std::string effective_setup_ap_password()", source)
         self.assertIn('kSetupAPPasswordKey[] = "setup_ap_pass"', store)
         self.assertIn("save_setup_ap_password", store)
         self.assertIn("clear_setup_ap_password", store)
