@@ -1,7 +1,6 @@
 #include "provisioning.h"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -12,7 +11,6 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -22,6 +20,15 @@ namespace stagecore {
 namespace {
 
 constexpr char kTag[] = "stagelaser-setup";
+
+#ifndef STAGECORE_SETUP_AP_PASSWORD
+#define STAGECORE_SETUP_AP_PASSWORD "StageCoreSetup"
+#endif
+
+constexpr char kSetupApPassword[] = STAGECORE_SETUP_AP_PASSWORD;
+static_assert(sizeof(kSetupApPassword) - 1 >= 8 &&
+                  sizeof(kSetupApPassword) - 1 <= 63,
+              "StageCore setup AP password must be 8-63 bytes");
 
 struct PortalContext {
   std::string default_display_name;
@@ -95,16 +102,6 @@ std::string id_suffix(const std::string &device_id) {
   }
   if (compact.size() > 6) compact = compact.substr(compact.size() - 6);
   return compact.empty() ? "setup" : compact;
-}
-
-std::string random_ap_password() {
-  static constexpr char kAlphabet[] =
-      "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  std::array<char, 13> out{};
-  for (size_t i = 0; i + 1 < out.size(); ++i) {
-    out[i] = kAlphabet[esp_random() % (sizeof(kAlphabet) - 1)];
-  }
-  return out.data();
 }
 
 esp_err_t root_handler(httpd_req_t *req) {
@@ -216,7 +213,7 @@ esp_err_t init_provisioning_ap(const std::string &ssid,
     const std::string &device_id,
     const std::string &default_display_name) {
   const std::string ssid = "StageLaser-" + id_suffix(device_id);
-  const std::string password = random_ap_password();
+  const std::string password = kSetupApPassword;
 
   const esp_err_t network = init_provisioning_ap(ssid, password);
   if (network != ESP_OK) {
