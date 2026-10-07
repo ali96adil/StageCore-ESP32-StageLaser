@@ -22,7 +22,7 @@ namespace {
 constexpr char kTag[] = "stagelaser-setup";
 
 #ifndef STAGECORE_SETUP_AP_PASSWORD
-#define STAGECORE_SETUP_AP_PASSWORD "StageCoreSetup"
+#define STAGECORE_SETUP_AP_PASSWORD "12345678"
 #endif
 
 constexpr char kSetupApPassword[] = STAGECORE_SETUP_AP_PASSWORD;
