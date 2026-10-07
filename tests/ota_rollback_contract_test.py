@@ -19,9 +19,10 @@ class OtaRollbackContractTest(unittest.TestCase):
         )
         self.assertIsNotNone(match)
         section = match.group(1)
+        normalized = section.replace("\\\"", '"')
         self.assertIn(
             'SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ota_candidate.defaults"',
-            section,
+            normalized,
         )
 
     def test_safe_boot_guard_is_wired_before_provisioning(self):
