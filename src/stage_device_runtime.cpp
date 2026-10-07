@@ -1508,7 +1508,7 @@ esp_err_t run_stage_device_runtime(
         firmware_failure = stagelaser::FirmwareUpdateFailure{};
         const esp_err_t commit_err =
             stagelaser::commit_verified_firmware(
-                verified_partition, &firmware_failure);
+                firmware_request, verified_partition, &firmware_failure);
         if (commit_err != ESP_OK) {
           err = send_text(
               client,
