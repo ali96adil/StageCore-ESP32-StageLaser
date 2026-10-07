@@ -111,4 +111,4 @@ The first ESP32-C3 flash must use the NO-ACTUATION environment with the relay an
 
 ## Setup Wi-Fi access point
 
-When StageLaser needs first-run Wi-Fi provisioning, it broadcasts a device-specific SSID and uses the shared StageCore setup password `StageCoreSetup`. This removes the need to read a random password from Serial Monitor. The password may be overridden at build time with `STAGECORE_SETUP_AP_PASSWORD`; keep the same value across StageCore devices when using that override.
+When StageLaser needs first-run Wi-Fi provisioning, it broadcasts a device-specific SSID and uses the shared StageCore setup password `12345678`. This removes the need to read a random password from Serial Monitor. The password may be overridden at build time with `STAGECORE_SETUP_AP_PASSWORD`; keep the same value across StageCore devices when using that override.
