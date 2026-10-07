@@ -213,7 +213,7 @@ esp_err_t init_provisioning_ap(const std::string &ssid,
     const std::string &device_id,
     const std::string &default_display_name) {
   const std::string ssid = "StageLaser-" + id_suffix(device_id);
-  const std::string password = kSetupApPassword;
+  const std::string password = effective_setup_ap_password();
 
   const esp_err_t network = init_provisioning_ap(ssid, password);
   if (network != ESP_OK) {
@@ -242,9 +242,7 @@ esp_err_t init_provisioning_ap(const std::string &ssid,
   save.handler = save_handler;
   save.user_ctx = &ctx;
   ESP_ERROR_CHECK(httpd_register_uri_handler(server, &save));
-
-  ESP_LOGW(kTag, "first-run provisioning AP SSID=%s password=%s",
-           ssid.c_str(), password.c_str());
+  ESP_LOGW(kTag, "first-run provisioning AP SSID=%s", ssid.c_str());
   ESP_LOGW(kTag,
            "relay remains NO-ACTUATION; provisioning cannot assign a Project");
 

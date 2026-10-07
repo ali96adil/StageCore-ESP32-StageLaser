@@ -14,6 +14,7 @@ constexpr char kDisplayKey[] = "display_name";
 constexpr char kHubIDKey[] = "hub_id";
 constexpr char kHubFingerprintKey[] = "hub_fp";
 constexpr char kHubTLSKey[] = "hub_tls";
+constexpr char kSetupAPPasswordKey[] = "setup_ap_pass";
 
 esp_err_t read_string(nvs_handle_t handle, const char *key, std::string *value,
                       bool *found = nullptr) {
@@ -84,6 +85,46 @@ esp_err_t save_device_config(const DeviceConfig &config) {
   err = write_string(handle, kSSIDKey, config.wifi_ssid);
   if (err == ESP_OK) err = write_string(handle, kPasswordKey, config.wifi_password);
   if (err == ESP_OK) err = write_string(handle, kDisplayKey, config.display_name);
+  if (err == ESP_OK) err = nvs_commit(handle);
+  nvs_close(handle);
+  return err;
+}
+
+esp_err_t load_setup_ap_password(std::string *password) {
+  if (password == nullptr) return ESP_ERR_INVALID_ARG;
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(kNamespace, NVS_READONLY, &handle);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    password->clear();
+    return ESP_OK;
+  }
+  if (err != ESP_OK) return err;
+  err = read_string(handle, kSetupAPPasswordKey, password);
+  nvs_close(handle);
+  if (err != ESP_OK) return err;
+  if (!password->empty() && (password->size() < 8 || password->size() > 63)) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  return ESP_OK;
+}
+
+esp_err_t save_setup_ap_password(const std::string &password) {
+  if (password.size() < 8 || password.size() > 63) return ESP_ERR_INVALID_ARG;
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if (err != ESP_OK) return err;
+  err = write_string(handle, kSetupAPPasswordKey, password);
+  if (err == ESP_OK) err = nvs_commit(handle);
+  nvs_close(handle);
+  return err;
+}
+
+esp_err_t clear_setup_ap_password() {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+  if (err != ESP_OK) return err;
+  err = erase_key_if_present(handle, kSetupAPPasswordKey);
   if (err == ESP_OK) err = nvs_commit(handle);
   nvs_close(handle);
   return err;
