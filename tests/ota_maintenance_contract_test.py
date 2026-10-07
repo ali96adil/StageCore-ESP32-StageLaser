@@ -59,6 +59,10 @@ class OTAMaintenanceContract(unittest.TestCase):
         self.assertIn("cJSON_IsTrue(rollback)", update)
         self.assertIn("CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y", candidate)
         self.assertIn("esp_ota_mark_app_valid_cancel_rollback", boot_guard)
+        self.assertIn("ota_record_expected_boot", update)
+        self.assertIn("STAGECORE_FW_VERSION", boot_guard)
+        self.assertIn("STAGECORE_BUILD_REVISION", boot_guard)
+        self.assertIn("esp_ota_mark_app_invalid_rollback_and_reboot", boot_guard)
 
 
 if __name__ == "__main__":
