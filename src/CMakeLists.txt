@@ -16,12 +16,14 @@ idf_component_register(
     "laser_limits_store.cpp"
     "laser_state_store.cpp"
     "network_station.cpp"
+    "ota_boot_guard.cpp"
     "provisioning.cpp"
     "relay_output.cpp"
     "stage_device_runtime.cpp"
     "trusted_clock.cpp"
   INCLUDE_DIRS "."
   REQUIRES
+    app_update
     driver
     esp_event
     esp_http_client

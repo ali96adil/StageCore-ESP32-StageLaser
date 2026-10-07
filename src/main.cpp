@@ -13,6 +13,7 @@
 #include "laser_limits_store.h"
 #include "laser_state_store.h"
 #include "network_station.h"
+#include "ota_boot_guard.h"
 #include "nvs_flash.h"
 #include "provisioning.h"
 #include "relay_output.h"
@@ -140,6 +141,14 @@ extern "C" void app_main(void) {
   stagecore::DeviceConfig config;
   if (stagecore::load_device_config(&config) != ESP_OK) {
     hold_safe_failure("configuration storage unavailable");
+  }
+
+  // An OTA image is confirmed only after all local safety-critical persistent
+  // state, timing limits, relay initialization, identity and configuration
+  // storage have been restored successfully. Network availability is not part
+  // of this checkpoint, so a safe image can still boot into provisioning.
+  if (stagecore::stagelaser::ota_confirm_safe_boot_if_pending() != ESP_OK) {
+    hold_safe_failure("OTA candidate safe-boot confirmation failed");
   }
   if (!config.complete()) {
     stagecore::run_provisioning_portal(
