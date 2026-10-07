@@ -1,5 +1,6 @@
 #include "stage_device_runtime.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,8 @@
 
 #include "cJSON.h"
 #include "esp_log.h"
+#include "esp_netif.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -154,12 +157,53 @@ const char *reset_reason_text() {
   }
 }
 
+std::string make_boot_id() {
+  std::array<uint8_t, 16> bytes{};
+  esp_fill_random(bytes.data(), bytes.size());
+
+  // RFC 4122-style random UUID formatting. This identifier is diagnostic
+  // only: it is generated once per MCU boot and is not a device identity.
+  bytes[6] = static_cast<uint8_t>((bytes[6] & 0x0fU) | 0x40U);
+  bytes[8] = static_cast<uint8_t>((bytes[8] & 0x3fU) | 0x80U);
+
+  char text[37] = {};
+  std::snprintf(
+      text, sizeof(text),
+      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      bytes[0], bytes[1], bytes[2], bytes[3],
+      bytes[4], bytes[5], bytes[6], bytes[7],
+      bytes[8], bytes[9], bytes[10], bytes[11],
+      bytes[12], bytes[13], bytes[14], bytes[15]);
+  return text;
+}
+
+const std::string &boot_id() {
+  static const std::string id = make_boot_id();
+  return id;
+}
+
+std::string station_ip_address() {
+  esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  if (netif == nullptr) return {};
+
+  esp_netif_ip_info_t info{};
+  if (esp_netif_get_ip_info(netif, &info) != ESP_OK || info.ip.addr == 0) {
+    return {};
+  }
+
+  char text[16] = {};
+  std::snprintf(text, sizeof(text), IPSTR, IP2STR(&info.ip));
+  return text;
+}
+
 stagelaser::ObservationMetadata make_observation_metadata(
     const RuntimeCommandState *commands = nullptr) {
   stagelaser::ObservationMetadata metadata;
   metadata.firmware_version = STAGECORE_FW_VERSION;
+  metadata.boot_id = boot_id();
   metadata.uptime_seconds = esp_timer_get_time() / 1000000LL;
   metadata.reset_reason = reset_reason_text();
+  metadata.ip_address = station_ip_address();
 
   wifi_ap_record_t ap{};
   if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
