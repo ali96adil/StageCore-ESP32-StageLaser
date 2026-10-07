@@ -80,7 +80,7 @@ Still pending:
 - boot/reset electrical idle proof
 - relay-only pulse/rest qualification
 - shared-power qualification
-- production OTA partition layout
+- physical update / failed-boot rollback acceptance on the already CI-validated 4 MB OTA layout
 - physical recovery input
 
 The firmware must remain:

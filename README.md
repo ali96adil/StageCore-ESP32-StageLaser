@@ -74,7 +74,7 @@ STAGECORE_LASER_LOCAL_RECOVERY_GPIO=-1
 STAGECORE_LASER_LOCAL_RECOVERY_QUALIFIED=0
 ```
 
-The physical StageLaser board has been verified with esptool as ESP32-C3 QFN32 rev v0.4 with embedded XMC 4 MB flash and a 40 MHz crystal. The default partition table is still **CI-only**. The separate 4 MB dual-slot OTA candidate is structurally CI-validated, uses application rollback, and now contains the controlled StageCore OTA transport. The default image does not advertise firmware maintenance. Physical update/rollback behavior is still not qualified.
+The physical StageLaser board has been verified with esptool as ESP32-C3 QFN32 rev v0.4 with embedded XMC 4 MB flash and a 40 MHz crystal. The default partition table is still **CI-only**. The separate 4 MB dual-slot OTA candidate is structurally CI-validated, uses application rollback, and contains the complete controlled StageCore OTA software path. The default image does not advertise firmware maintenance. Only physical real-board update/rollback/recovery behavior remains unqualified.
 
 ## Hardware gate
 
@@ -98,7 +98,7 @@ Qualification still must establish:
 6. ESP32 vs laser power-domain relationship
 7. real cold-power behavior: laser physically starts OFF
 8. pulse-width and minimum-rest behavior on the real relay
-9. production flash / OTA partition geometry
+9. physical OTA update / failed-boot rollback behavior on the already CI-validated 4 MB dual-slot geometry
 10. a safe physical local-recovery input if one is added
 
 Only after that gate may a hardware environment set actuation enabled.
