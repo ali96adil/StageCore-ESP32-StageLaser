@@ -4,6 +4,7 @@
 #include <string>
 
 #include "esp_err.h"
+#include "esp_partition.h"
 #include "hub_discovery.h"
 #include "hub_security.h"
 
@@ -45,6 +46,11 @@ esp_err_t perform_firmware_update(
     const FirmwareUpdateRequest &request,
     FirmwareProgressCallback progress,
     void *progress_ctx,
+    const esp_partition_t **verified_partition,
+    FirmwareUpdateFailure *failure);
+
+esp_err_t commit_verified_firmware(
+    const esp_partition_t *verified_partition,
     FirmwareUpdateFailure *failure);
 
 }  // namespace stagecore::stagelaser
