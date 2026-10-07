@@ -15,6 +15,7 @@
 #include "mbedtls/sha256.h"
 #include "ota_boot_guard.h"
 #include "sdkconfig.h"
+#include "trusted_clock.h"
 
 #ifndef STAGECORE_FW_VERSION
 #define STAGECORE_FW_VERSION "0.1.0-dev.1"
@@ -40,6 +41,8 @@ constexpr char kArtifactPrefix[] =
 constexpr int64_t kMaxArtifactBytes = 64LL << 20;
 constexpr int kHTTPTimeoutMS = 15000;
 constexpr size_t kReadChunk = 4096;
+constexpr int64_t kMaxManifestLifetimeMS = 30LL * 60LL * 1000LL;
+constexpr int64_t kMaxFutureClockSkewMS = 30LL * 1000LL;
 
 void set_failure(FirmwareUpdateFailure *failure,
                  const char *code,
@@ -300,6 +303,27 @@ esp_err_t parse_firmware_update_request(
         !nonempty_string(update, "expires_at", &expires_at)) {
       set_failure(failure, "FIRMWARE_MANIFEST_REJECTED",
                   "Firmware manifest lifetime is missing", false);
+      break;
+    }
+
+    int64_t issued_at_ms = 0;
+    int64_t expires_at_ms = 0;
+    if (!stagecore::trusted_clock_ready() ||
+        !stagecore::parse_rfc3339_unix_ms(issued_at, &issued_at_ms) ||
+        !stagecore::parse_rfc3339_unix_ms(expires_at, &expires_at_ms)) {
+      set_failure(failure, "FIRMWARE_MANIFEST_TIME_UNTRUSTED",
+                  "Firmware manifest lifetime cannot be validated against the pinned Hub clock",
+                  true);
+      break;
+    }
+    const int64_t now_ms = stagecore::trusted_now_unix_ms();
+    if (issued_at_ms > now_ms + kMaxFutureClockSkewMS ||
+        expires_at_ms <= now_ms ||
+        expires_at_ms <= issued_at_ms ||
+        expires_at_ms - issued_at_ms > kMaxManifestLifetimeMS) {
+      set_failure(failure, "FIRMWARE_MANIFEST_STALE",
+                  "Firmware manifest lifetime is expired or outside the allowed window",
+                  false);
       break;
     }
 
