@@ -51,6 +51,16 @@ class OTAMaintenanceContract(unittest.TestCase):
         self.assertIn("esp_ota_get_next_update_partition", source)
         self.assertIn("esp_ota_abort", source)
 
+    def test_manifest_lifetime_uses_pinned_hub_trusted_clock(self):
+        source = (ROOT / "src" / "firmware_update.cpp").read_text()
+        self.assertIn('#include "trusted_clock.h"', source)
+        self.assertIn("trusted_clock_ready()", source)
+        self.assertIn("parse_rfc3339_unix_ms", source)
+        self.assertIn("trusted_now_unix_ms()", source)
+        self.assertIn("kMaxFutureClockSkewMS", source)
+        self.assertIn("kMaxManifestLifetimeMS", source)
+        self.assertIn('"FIRMWARE_MANIFEST_STALE"', source)
+
     def test_rollback_required_and_safe_boot_confirmation_exist(self):
         update = (ROOT / "src" / "firmware_update.cpp").read_text()
         boot_guard = (ROOT / "src" / "ota_boot_guard.cpp").read_text()
