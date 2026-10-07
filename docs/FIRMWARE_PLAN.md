@@ -25,6 +25,7 @@ Implemented software layers:
 17. bounded same-session command result dedupe
 18. persistent 32-entry SHA-256 actuation replay fence written before controller execution
 19. persistent validated relay/output timing limits stored separately from physical truth
+20. CI validation of the 4 MB OTA candidate partition layout and built-image fit
 
 ## Verified physical board
 
@@ -139,7 +140,8 @@ Relay identification: **PARTIAL PASS**
 
 ### 10. Production update and recovery path
 - real flash capacity: **4 MB verified**
-- dual-slot OTA partition candidate: **defined and CI-gated, not physically qualified**
+- dual-slot OTA partition candidate: **defined and structurally CI-validated, not physically qualified**
+- built OTA-candidate firmware must fit both equal app slots in CI
 - qualify first boot and update/rollback behavior on the real board
 - implement and qualify the controlled StageCore OTA path
 - choose/qualify a physical local-recovery/trust-reset input if required
