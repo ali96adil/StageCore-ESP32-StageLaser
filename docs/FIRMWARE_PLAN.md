@@ -26,6 +26,7 @@ Implemented software layers:
 18. persistent 32-entry SHA-256 actuation replay fence written before controller execution
 19. persistent validated relay/output timing limits stored separately from physical truth
 20. CI validation of the 4 MB OTA candidate partition layout and built-image fit
+21. OTA rollback safe-boot confirmation: candidate images remain pending until local StageLaser safety persistence and configuration storage restore successfully
 
 ## Verified physical board
 
@@ -55,7 +56,7 @@ Still pending:
 - physical GPIO3 boot/reset inactive electrical behavior
 - shared-power qualification
 - physical qualification of the 4 MB dual-slot OTA candidate
-- controlled OTA transport / rollback acceptance
+- controlled OTA transport and physical update/rollback acceptance
 - physical local-recovery button GPIO
 
 The current firmware build remains NO-ACTUATION.
@@ -142,6 +143,7 @@ Relay identification: **PARTIAL PASS**
 - real flash capacity: **4 MB verified**
 - dual-slot OTA partition candidate: **defined and structurally CI-validated, not physically qualified**
 - built OTA-candidate firmware must fit both equal app slots in CI
+- OTA candidate enables ESP-IDF application rollback and confirms a pending image only after the local safe-boot checkpoint
 - qualify first boot and update/rollback behavior on the real board
 - implement and qualify the controlled StageCore OTA path
 - choose/qualify a physical local-recovery/trust-reset input if required
