@@ -31,6 +31,15 @@ static_assert(sizeof(kSetupApPassword) - 1 >= 8 &&
                   sizeof(kSetupApPassword) - 1 <= 63,
               "StageCore setup AP password must be 8-63 bytes");
 
+std::string effective_setup_ap_password() {
+  std::string stored;
+  if (load_setup_ap_password(&stored) == ESP_OK &&
+      stored.size() >= 8 && stored.size() <= 63) {
+    return stored;
+  }
+  return kSetupApPassword;
+}
+
 struct PortalContext {
   std::string default_display_name;
   bool recovery = false;
