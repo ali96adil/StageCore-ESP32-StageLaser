@@ -13,7 +13,7 @@ class ProvisioningContract(unittest.TestCase):
     def test_portal_is_password_protected_and_laser_safe(self):
         source = (ROOT / "src" / "provisioning.cpp").read_text()
         self.assertIn("WIFI_AUTH_WPA2_PSK", source)
-        self.assertIn('#define STAGECORE_SETUP_AP_PASSWORD "StageCoreSetup"', source)
+        self.assertIn('#define STAGECORE_SETUP_AP_PASSWORD "12345678"', source)
         self.assertIn("kSetupApPassword", source)
         self.assertNotIn("random_ap_password", source)
         self.assertNotIn("esp_random()", source)
