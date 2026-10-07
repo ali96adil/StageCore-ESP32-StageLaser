@@ -162,22 +162,48 @@ extern "C" void app_main(void) {
         identity.device_id(), default_display_name(identity.device_id()));
   }
 
+  constexpr int kRecoveryAfterFailed30sWindows = 3;
+  int failed_network_windows = 0;
   esp_err_t network =
       stagecore::connect_station(config.wifi_ssid, config.wifi_password, 30000);
   while (network != ESP_OK) {
-    ESP_LOGW(kTag, "waiting for Stage LAN: %s", esp_err_to_name(network));
+    ++failed_network_windows;
+    ESP_LOGW(kTag, "waiting for Stage LAN (%d/%d): %s",
+             failed_network_windows, kRecoveryAfterFailed30sWindows,
+             esp_err_to_name(network));
+    if (failed_network_windows >= kRecoveryAfterFailed30sWindows) {
+      const esp_err_t recovery = stagecore::run_recovery_portal(
+          identity.device_id(), config.display_name);
+      if (recovery != ESP_OK) {
+        hold_safe_failure("Stage LAN recovery portal failed");
+      }
+      failed_network_windows = 0;
+      network = stagecore::wait_for_station_connection(0);
+      continue;
+    }
     network = stagecore::wait_for_station_connection(30000);
   }
+  failed_network_windows = 0;
   ESP_LOGI(kTag, "Stage LAN connected as %s", config.display_name.c_str());
 
   while (true) {
     if (stagecore::wait_for_station_connection(0) != ESP_OK) {
       ESP_LOGW(kTag, "Stage LAN disconnected; waiting for reconnect");
       if (stagecore::wait_for_station_connection(30000) != ESP_OK) {
+        ++failed_network_windows;
+        if (failed_network_windows >= kRecoveryAfterFailed30sWindows) {
+          const esp_err_t recovery = stagecore::run_recovery_portal(
+              identity.device_id(), config.display_name);
+          if (recovery != ESP_OK) {
+            hold_safe_failure("Stage LAN recovery portal failed");
+          }
+          failed_network_windows = 0;
+        }
         vTaskDelay(pdMS_TO_TICKS(2000));
         continue;
       }
     }
+    failed_network_windows = 0;
 
     stagecore::VerifiedHub hub;
     if (stagecore::discover_and_verify_hub(&hub) != ESP_OK) {

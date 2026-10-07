@@ -22,6 +22,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "command_replay_store.h"
+#include "config_store.h"
 #include "firmware_update.h"
 #include "laser_command_contract.h"
 #include "laser_observation.h"
@@ -51,6 +52,7 @@ constexpr EventBits_t kProtocolErrorBit = BIT4;
 constexpr EventBits_t kRuntimeReadyBit = BIT5;
 constexpr EventBits_t kCommandBit = BIT6;
 constexpr EventBits_t kMaintenanceBit = BIT7;
+constexpr EventBits_t kSetupAPMaintenanceBit = BIT8;
 
 struct PrepareRequest {
   bool present = false;
@@ -103,6 +105,7 @@ struct RuntimeContext {
   bool runtime_ready_received = false;
   std::vector<std::string> pending_command_frames;
   std::string pending_firmware_frame;
+  std::string pending_setup_ap_frame;
   stagelaser::CommandJournal journal;
 };
 
@@ -264,6 +267,8 @@ cJSON *capabilities_json() {
   cJSON_AddItemToArray(
       caps, cJSON_CreateString("device.maintenance.firmware-update"));
 #endif
+  cJSON_AddItemToArray(
+      caps, cJSON_CreateString("device.maintenance.setup-ap-password"));
   return caps;
 }
 
@@ -496,6 +501,21 @@ bool queue_command(RuntimeContext *context, const std::string &text) {
   return accepted;
 }
 
+bool queue_setup_ap_maintenance(RuntimeContext *context,
+                                const std::string &text) {
+  if (context == nullptr || context->lock == nullptr || text.empty()) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    return false;
+  }
+  const bool accepted = context->pending_setup_ap_frame.empty();
+  if (accepted) context->pending_setup_ap_frame = text;
+  xSemaphoreGive(context->lock);
+  if (accepted) xEventGroupSetBits(context->events, kSetupAPMaintenanceBit);
+  return accepted;
+}
+
 bool queue_firmware_update(RuntimeContext *context,
                            const std::string &text) {
 #if STAGECORE_OTA_ENABLED == 1
@@ -529,7 +549,22 @@ bool handle_complete_text(RuntimeContext *context, const std::string &text) {
             cJSON_IsString(device) && device->valuestring != nullptr &&
             context != nullptr && context->device_id == device->valuestring;
 
-  if (ok && std::strcmp(type->valuestring, "assignment.state") == 0) {
+  if (ok &&
+      std::strcmp(type->valuestring, "maintenance.setup_ap_password") == 0) {
+    int64_t generation = 0;
+    const cJSON *request_id =
+        cJSON_GetObjectItemCaseSensitive(root, "request_id");
+    const cJSON *operation =
+        cJSON_GetObjectItemCaseSensitive(root, "operation");
+    ok = exact_positive_integer(root, "connection_generation", &generation) &&
+         generation == context->connection_generation &&
+         cJSON_IsString(request_id) && request_id->valuestring != nullptr &&
+         std::strlen(request_id->valuestring) == 36 &&
+         cJSON_IsString(operation) && operation->valuestring != nullptr &&
+         (std::strcmp(operation->valuestring, "SET") == 0 ||
+          std::strcmp(operation->valuestring, "RESET_DEFAULT") == 0);
+    if (ok) ok = queue_setup_ap_maintenance(context, text);
+  } else if (ok && std::strcmp(type->valuestring, "assignment.state") == 0) {
     ok = parse_assignment_state(context, root);
   } else if (ok &&
              std::strcmp(type->valuestring,
@@ -722,6 +757,24 @@ bool take_command(RuntimeContext *context, std::string *frame) {
   return present;
 }
 
+bool take_setup_ap_maintenance(RuntimeContext *context,
+                               std::string *frame) {
+  if (context == nullptr || frame == nullptr || context->lock == nullptr) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    return false;
+  }
+  const bool present = !context->pending_setup_ap_frame.empty();
+  if (present) {
+    *frame = std::move(context->pending_setup_ap_frame);
+    context->pending_setup_ap_frame.clear();
+  }
+  xSemaphoreGive(context->lock);
+  if (present) xEventGroupClearBits(context->events, kSetupAPMaintenanceBit);
+  return present;
+}
+
 bool take_firmware_update(RuntimeContext *context, std::string *frame) {
 #if STAGECORE_OTA_ENABLED == 1
   if (context == nullptr || frame == nullptr || context->lock == nullptr) {
@@ -743,6 +796,84 @@ bool take_firmware_update(RuntimeContext *context, std::string *frame) {
   (void)frame;
   return false;
 #endif
+}
+
+std::string make_setup_ap_maintenance_result(
+    const RuntimeContext &context,
+    const std::string &request_id,
+    const char *state,
+    const char *detail) {
+  cJSON *root = cJSON_CreateObject();
+  if (root == nullptr) return {};
+  cJSON_AddStringToObject(
+      root, "type", "maintenance.setup_ap_password.result");
+  cJSON_AddNumberToObject(root, "schema_version", 2);
+  cJSON_AddStringToObject(root, "device_id", context.device_id.c_str());
+  cJSON_AddNumberToObject(
+      root, "connection_generation",
+      static_cast<double>(context.connection_generation));
+  cJSON_AddStringToObject(root, "request_id", request_id.c_str());
+  cJSON_AddStringToObject(root, "maintenance_state", state);
+  cJSON_AddStringToObject(root, "detail", detail);
+  const std::string out = print_json(root);
+  cJSON_Delete(root);
+  return out;
+}
+
+esp_err_t process_setup_ap_maintenance(
+    RuntimeContext *context,
+    esp_websocket_client_handle_t client,
+    const std::string &frame) {
+  if (context == nullptr || client == nullptr || frame.empty()) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  cJSON *root = cJSON_ParseWithLength(frame.data(), frame.size());
+  if (root == nullptr) return ESP_ERR_INVALID_RESPONSE;
+
+  const cJSON *request_id =
+      cJSON_GetObjectItemCaseSensitive(root, "request_id");
+  const cJSON *operation =
+      cJSON_GetObjectItemCaseSensitive(root, "operation");
+  const cJSON *password =
+      cJSON_GetObjectItemCaseSensitive(root, "password");
+  int64_t generation = 0;
+  const bool envelope_ok =
+      exact_positive_integer(root, "connection_generation", &generation) &&
+      generation == context->connection_generation &&
+      cJSON_IsString(request_id) && request_id->valuestring != nullptr &&
+      std::strlen(request_id->valuestring) == 36 &&
+      cJSON_IsString(operation) && operation->valuestring != nullptr;
+  if (!envelope_ok) {
+    cJSON_Delete(root);
+    return ESP_ERR_INVALID_RESPONSE;
+  }
+
+  esp_err_t apply_err = ESP_ERR_INVALID_ARG;
+  const char *detail = "Setup AP credential request rejected";
+  if (std::strcmp(operation->valuestring, "SET") == 0) {
+    if (cJSON_IsString(password) && password->valuestring != nullptr) {
+      const std::string value = password->valuestring;
+      if (value.size() >= 8 && value.size() <= 63) {
+        apply_err = save_setup_ap_password(value);
+        detail = apply_err == ESP_OK
+                     ? "Setup AP credential updated"
+                     : "Setup AP credential could not be persisted";
+      }
+    }
+  } else if (std::strcmp(operation->valuestring, "RESET_DEFAULT") == 0 &&
+             password == nullptr) {
+    apply_err = clear_setup_ap_password();
+    detail = apply_err == ESP_OK
+                 ? "Setup AP credential reset to shared default"
+                 : "Setup AP credential reset could not be persisted";
+  }
+
+  const std::string request = request_id->valuestring;
+  cJSON_Delete(root);
+  const std::string result = make_setup_ap_maintenance_result(
+      *context, request, apply_err == ESP_OK ? "APPLIED" : "REJECTED", detail);
+  if (result.empty()) return ESP_FAIL;
+  return send_text(client, result);
 }
 
 bool known_safe_off(const stagelaser::LaserController &laser) {
@@ -1395,6 +1526,14 @@ esp_err_t run_stage_device_runtime(
       if (bits & kDisconnectedBit) {
         err = ESP_ERR_INVALID_STATE;
         break;
+      }
+
+      std::string setup_ap_frame;
+      if ((bits & kSetupAPMaintenanceBit) &&
+          take_setup_ap_maintenance(&context, &setup_ap_frame)) {
+        err = process_setup_ap_maintenance(
+            &context, client, setup_ap_frame);
+        if (err != ESP_OK) break;
       }
 
 #if STAGECORE_OTA_ENABLED == 1
