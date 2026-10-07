@@ -1467,6 +1467,7 @@ esp_err_t run_stage_device_runtime(
         progress.update_id = firmware_request.update_id;
 
         firmware_failure = stagelaser::FirmwareUpdateFailure{};
+        const esp_partition_t *verified_partition = nullptr;
         const esp_err_t update_err =
             stagelaser::perform_firmware_update(
                 hub,
@@ -1474,6 +1475,7 @@ esp_err_t run_stage_device_runtime(
                 firmware_request,
                 &firmware_progress,
                 &progress,
+                &verified_partition,
                 &firmware_failure);
         if (update_err != ESP_OK) {
           if (firmware_failure.error_code !=
@@ -1500,8 +1502,26 @@ esp_err_t run_stage_device_runtime(
                 context.connection_generation,
                 firmware_request.update_id,
                 "REBOOTING",
-                "Verified firmware selected; rebooting into rollback-protected candidate"));
+                "Firmware verified; committing rollback-protected reboot handoff"));
         if (err != ESP_OK) break;
+
+        firmware_failure = stagelaser::FirmwareUpdateFailure{};
+        const esp_err_t commit_err =
+            stagelaser::commit_verified_firmware(
+                verified_partition, &firmware_failure);
+        if (commit_err != ESP_OK) {
+          err = send_text(
+              client,
+              make_firmware_maintenance_result(
+                  context.device_id,
+                  context.connection_generation,
+                  firmware_request.update_id,
+                  "FAILED",
+                  firmware_failure.detail.c_str(),
+                  &firmware_failure));
+          break;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
       }
