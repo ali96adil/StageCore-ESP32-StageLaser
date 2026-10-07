@@ -1,0 +1,8 @@
+# StageLaser 4 MB OTA candidate only.
+# ESP-IDF 5.5 rollback support keeps a newly selected OTA app in
+# ESP_OTA_IMG_PENDING_VERIFY until StageLaser reaches its explicit local
+# safety checkpoint and confirms the image from application code.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Do not burn or advance anti-rollback eFuse state during qualification.
+# CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK is not set
