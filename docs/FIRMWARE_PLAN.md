@@ -27,6 +27,7 @@ Implemented software layers:
 19. persistent validated relay/output timing limits stored separately from physical truth
 20. CI validation of the 4 MB OTA candidate partition layout and built-image fit
 21. OTA rollback safe-boot confirmation: candidate images remain pending until local StageLaser safety persistence and configuration storage restore successfully
+22. boot-time physical-presence Hub trust recovery: trust-only, non-actuating, and disabled until a recovery input GPIO is physically qualified
 
 ## Verified physical board
 
@@ -57,7 +58,7 @@ Still pending:
 - shared-power qualification
 - physical qualification of the 4 MB dual-slot OTA candidate
 - controlled OTA transport and physical update/rollback acceptance
-- physical local-recovery button GPIO
+- physical local-recovery button GPIO, active level and idle bias
 
 The current firmware build remains NO-ACTUATION.
 
@@ -146,7 +147,8 @@ Relay identification: **PARTIAL PASS**
 - OTA candidate enables ESP-IDF application rollback and confirms a pending image only after the local safe-boot checkpoint
 - qualify first boot and update/rollback behavior on the real board
 - implement and qualify the controlled StageCore OTA path
-- choose/qualify a physical local-recovery/trust-reset input if required
+- local recovery source path is implemented but remains disabled with GPIO=-1 / QUALIFIED=0
+- choose/qualify a physical local-recovery/trust-reset input, active level and idle bias before enabling it
 
 ## Release gate
 

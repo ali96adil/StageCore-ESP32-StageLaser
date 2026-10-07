@@ -15,6 +15,7 @@ idf_component_register(
     "laser_limits.cpp"
     "laser_limits_store.cpp"
     "laser_state_store.cpp"
+    "local_recovery.cpp"
     "network_station.cpp"
     "ota_boot_guard.cpp"
     "provisioning.cpp"

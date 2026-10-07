@@ -21,6 +21,7 @@ The firmware software stack is complete through the authenticated Stage Device v
 - NVS physical-truth persistence
 - persistent validated relay/output timing limits
 - OTA candidate safe-boot rollback confirmation after local persistence/configuration restore
+- boot-time physical-presence Hub trust recovery source path, disabled until an input GPIO is physically qualified
 - persist-before-PICK transaction controller
 - persistent P-256 device identity
 - Wi-Fi provisioning and reconnect policy
@@ -65,6 +66,8 @@ PlatformIO builds a generic ESP32-C3 image with:
 STAGECORE_LASER_ACTUATION_ENABLED=0
 STAGECORE_LASER_OUTPUT_GPIO=-1
 STAGECORE_LASER_SHARED_POWER_QUALIFIED=0
+STAGECORE_LASER_LOCAL_RECOVERY_GPIO=-1
+STAGECORE_LASER_LOCAL_RECOVERY_QUALIFIED=0
 ```
 
 The physical StageLaser board has been verified with esptool as ESP32-C3 QFN32 rev v0.4 with embedded XMC 4 MB flash and a 40 MHz crystal. The default partition table is still **CI-only**. The separate 4 MB dual-slot OTA candidate is structurally CI-validated and uses application rollback, but OTA transport plus physical update/rollback behavior are not qualified yet.
