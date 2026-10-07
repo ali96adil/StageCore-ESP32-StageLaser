@@ -101,16 +101,8 @@ jobs:
       - name: Prove OTA rollback is enabled only for candidate
         run: |
           set -euo pipefail
-          grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y        run: |
-          python tools/check_ota_candidate.py \
-            --partitions partitions-ota-candidate-4mb.csv \
-            --firmware .pio/build/esp32c3-ota-candidate-no-actuation/firmware.bin
- sdkconfig.esp32c3-ota-candidate-no-actuation
-          if grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y        run: |
-          python tools/check_ota_candidate.py \
-            --partitions partitions-ota-candidate-4mb.csv \
-            --firmware .pio/build/esp32c3-ota-candidate-no-actuation/firmware.bin
- sdkconfig.esp32c3-ci-no-actuation; then
+          grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y$' sdkconfig.esp32c3-ota-candidate-no-actuation
+          if grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y$' sdkconfig.esp32c3-ci-no-actuation; then
             echo "rollback unexpectedly enabled in default CI image" >&2
             exit 1
           fi
