@@ -29,6 +29,14 @@ class GPIO3NoLoadQualificationContract(unittest.TestCase):
         self.assertNotIn("gpio_set_level(pin, 1)", source)
         self.assertIn("GPIO_MODE_OUTPUT", source)
 
+    def test_qualification_build_has_compile_time_actuation_fence(self):
+        source = (ROOT / "src" / "gpio_no_load_qualification.cpp").read_text()
+        self.assertIn("STAGECORE_LASER_ACTUATION_ENABLED", source)
+        self.assertIn(
+            "GPIO no-load qualification must never be combined with laser actuation",
+            source,
+        )
+
     def test_qualification_init_runs_before_relay_runtime_init(self):
         main = (ROOT / "src" / "main.cpp").read_text()
         q = main.index("gpio_no_load_qualification_init")

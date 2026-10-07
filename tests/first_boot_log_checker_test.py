@@ -18,6 +18,7 @@ I stagelaser: laser truth restored; persisted=no reset_reason=1 shared_power_qua
 I stagelaser: device_id=00000000-0000-0000-0000-000000000000
 W stagelaser-setup: first-run provisioning AP SSID=StageLaser-000000 password=redacted
 W stagelaser-setup: relay remains NO-ACTUATION; provisioning cannot assign a Project
+W stagelaser-gpio-qual: GPIO3 NO-LOAD QUALIFICATION: candidate held LOW; relay and laser must remain disconnected
 """
 
 
@@ -48,6 +49,21 @@ class FirstBootLogCheckerTest(unittest.TestCase):
         self.assertTrue(
             any("shared_power_qualified=no" in item for item in failures)
         )
+
+    def test_gpio3_no_load_marker_can_be_required(self):
+        self.assertEqual(
+            MODULE.evaluate(GOOD, expect_gpio3_no_load=True),
+            [],
+        )
+        failures = MODULE.evaluate(
+            GOOD.replace(
+                "GPIO3 NO-LOAD QUALIFICATION: candidate held LOW; "
+                "relay and laser must remain disconnected",
+                "",
+            ),
+            expect_gpio3_no_load=True,
+        )
+        self.assertTrue(any("GPIO3 no-load" in item for item in failures))
 
     def test_rejects_actuation_build_marker(self):
         log = GOOD + (
