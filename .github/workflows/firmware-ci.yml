@@ -94,12 +94,17 @@ jobs:
         run: python -m pip install --disable-pip-version-check platformio==6.2.0
       - name: Build CI no-actuation image
         run: pio run -e esp32c3-ci-no-actuation
-      - name: Prove artifact is no-actuation
+      - name: Prove artifact is no-actuation and OTA-disabled
         run: |
           set -euo pipefail
-          grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0' platformio.ini
-          grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1' platformio.ini
+          grep -A30 '^\[env:esp32c3-ci-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0'
+          grep -A30 '^\[env:esp32c3-ci-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1'
+          grep -A30 '^\[env:esp32c3-ci-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_OTA_ENABLED=0'
           test -f .pio/build/esp32c3-ci-no-actuation/firmware.bin
+          if strings .pio/build/esp32c3-ci-no-actuation/firmware.bin | grep -Fq 'device.maintenance.firmware-update'; then
+            echo "default CI image unexpectedly advertises firmware maintenance" >&2
+            exit 1
+          fi
       - name: Build GPIO3 no-load qualification image
         run: pio run -e esp32c3-gpio3-no-load-qualification
       - name: Prove GPIO3 qualification image is still no-actuation
@@ -110,12 +115,14 @@ jobs:
           grep -A15 '^\[env:esp32c3-gpio3-no-load-qualification\]' platformio.ini | grep -q -- 'STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO=3'
       - name: Build 4MB OTA candidate as no-actuation
         run: pio run -e esp32c3-ota-candidate-no-actuation
-      - name: Prove OTA candidate artifact is no-actuation
+      - name: Prove OTA candidate artifact is no-actuation and maintenance-capable
         run: |
           set -euo pipefail
           test -f .pio/build/esp32c3-ota-candidate-no-actuation/firmware.bin
           grep -A30 '^\[env:esp32c3-ota-candidate-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=0'
           grep -A30 '^\[env:esp32c3-ota-candidate-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=-1'
+          grep -A30 '^\[env:esp32c3-ota-candidate-no-actuation\]' platformio.ini | grep -q -- '-DSTAGECORE_OTA_ENABLED=1'
+          strings .pio/build/esp32c3-ota-candidate-no-actuation/firmware.bin | grep -Fq 'device.maintenance.firmware-update'
       - name: Prove OTA rollback is enabled only for candidate
         run: |
           set -euo pipefail
@@ -166,6 +173,8 @@ jobs:
             echo "shared_power_qualified=0"
             echo "local_recovery_gpio=-1"
             echo "local_recovery_qualified=0"
+            echo "default_ota_enabled=0"
+            echo "ota_candidate_enabled=1"
           } > "$OUT/BUILDINFO"
 
           git diff --quiet
