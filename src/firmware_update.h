@@ -50,6 +50,7 @@ esp_err_t perform_firmware_update(
     FirmwareUpdateFailure *failure);
 
 esp_err_t commit_verified_firmware(
+    const FirmwareUpdateRequest &request,
     const esp_partition_t *verified_partition,
     FirmwareUpdateFailure *failure);
 
