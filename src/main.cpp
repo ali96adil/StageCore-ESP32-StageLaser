@@ -10,6 +10,7 @@
 #include "hub_security.h"
 #include "laser_controller.h"
 #include "laser_controller_esp.h"
+#include "laser_limits_store.h"
 #include "laser_state_store.h"
 #include "network_station.h"
 #include "nvs_flash.h"
@@ -90,6 +91,26 @@ extern "C" void app_main(void) {
     hold_safe_failure("laser state storage unavailable");
   }
 
+  stagecore::stagelaser::Limits limits;
+  bool limits_found = false;
+  if (stagecore::stagelaser::load_persistent_limits(
+          &limits, &limits_found) != ESP_OK) {
+    hold_safe_failure("laser timing limits unavailable or invalid");
+  }
+  if (!limits_found &&
+      stagecore::stagelaser::save_persistent_limits(limits) != ESP_OK) {
+    hold_safe_failure("unable to persist default laser timing limits");
+  }
+  ESP_LOGI(kTag,
+           "laser limits restored; persisted=%s pulse_ms=%u min_rest_ms=%u "
+           "min_flash_hz=%.3f max_flash_hz=%.3f max_duration_ms=%u",
+           limits_found ? "yes" : "no",
+           static_cast<unsigned>(limits.pulse_ms),
+           static_cast<unsigned>(limits.min_rest_ms),
+           limits.min_flash_hz,
+           limits.max_flash_hz,
+           static_cast<unsigned>(limits.max_flash_duration_ms));
+
   const esp_reset_reason_t boot_reset_reason = esp_reset_reason();
   const bool shared_power_qualified =
       STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1;
@@ -98,7 +119,7 @@ extern "C" void app_main(void) {
   stagecore::stagelaser::RelayOutputActuator laser_actuator;
   stagecore::stagelaser::LaserController laser(
       persisted, classify_reset_reason(boot_reset_reason),
-      shared_power_qualified, &laser_store, &laser_actuator);
+      shared_power_qualified, &laser_store, &laser_actuator, limits);
   if (!laser_store.Save(laser.machine().PersistentSnapshot())) {
     hold_safe_failure("unable to persist restored laser truth state");
   }
