@@ -31,14 +31,11 @@
 namespace {
 constexpr char kTag[] = "stagelaser";
 
-void init_nvs() {
-  esp_err_t err = nvs_flash_init();
-  if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-      err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    err = nvs_flash_init();
-  }
-  ESP_ERROR_CHECK(err);
+esp_err_t init_nvs() {
+  // StageLaser persistence contains device identity, Hub trust, physical truth
+  // and replay fences. Never erase it automatically on an initialization
+  // error. Recovery/clear operations must be explicit and attended.
+  return nvs_flash_init();
 }
 
 [[noreturn]] void hold_safe_failure(const char *reason) {
@@ -74,7 +71,13 @@ stagecore::stagelaser::ResetClass classify_reset_reason(esp_reset_reason_t reaso
 
 extern "C" void app_main(void) {
   ESP_ERROR_CHECK(stagecore::stagelaser::gpio_no_load_qualification_init());
-  init_nvs();
+  const esp_err_t nvs_err = init_nvs();
+  if (nvs_err != ESP_OK) {
+    ESP_LOGE(kTag,
+             "NVS init failed: %s; automatic erase is prohibited",
+             esp_err_to_name(nvs_err));
+    hold_safe_failure("persistent safety state unavailable");
+  }
   ESP_LOGI(kTag, "StageLaser firmware %s (%s)", STAGECORE_FW_VERSION,
            STAGECORE_BUILD_REVISION);
 
