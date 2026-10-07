@@ -12,6 +12,7 @@
 #include "laser_controller_esp.h"
 #include "laser_limits_store.h"
 #include "laser_state_store.h"
+#include "local_recovery.h"
 #include "network_station.h"
 #include "ota_boot_guard.h"
 #include "nvs_flash.h"
@@ -141,6 +142,12 @@ extern "C" void app_main(void) {
   stagecore::DeviceConfig config;
   if (stagecore::load_device_config(&config) != ESP_OK) {
     hold_safe_failure("configuration storage unavailable");
+  }
+
+  // Local recovery is deliberately boot-time and non-actuating. With no
+  // physically qualified recovery GPIO configured, this is a no-op.
+  if (stagecore::stagelaser::maybe_run_boot_hub_trust_reset(laser) != ESP_OK) {
+    hold_safe_failure("local Hub trust recovery refused or failed");
   }
 
   // An OTA image is confirmed only after all local safety-critical persistent
