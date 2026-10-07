@@ -38,11 +38,14 @@ class OtaRollbackContractTest(unittest.TestCase):
             main,
         )
 
-    def test_guard_only_confirms_pending_image(self):
+    def test_guard_confirms_only_exact_expected_pending_image(self):
         guard = (ROOT / "src/ota_boot_guard.cpp").read_text()
         self.assertIn("ESP_OTA_IMG_PENDING_VERIFY", guard)
         self.assertIn("esp_ota_mark_app_valid_cancel_rollback()", guard)
-        self.assertNotIn("esp_ota_mark_app_invalid_rollback", guard)
+        self.assertIn("esp_ota_mark_app_invalid_rollback_and_reboot()", guard)
+        self.assertIn("expectation.target_version != STAGECORE_FW_VERSION", guard)
+        self.assertIn("expectation.source_revision != STAGECORE_BUILD_REVISION", guard)
+        self.assertIn("pending image has no trustworthy persisted update identity", guard)
         self.assertNotIn("esp_ota_begin(", guard)
         self.assertNotIn("esp_ota_write(", guard)
 
