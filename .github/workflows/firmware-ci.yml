@@ -40,6 +40,13 @@ jobs:
             tests/wifi_reconnect_policy_test.cpp \
             -o /tmp/stagelaser-wifi-policy-test
           /tmp/stagelaser-wifi-policy-test
+      - name: Test StageLaser timing limits
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            src/laser_limits.cpp tests/laser_limits_test.cpp \
+            -o /tmp/stagelaser-limits-test
+          /tmp/stagelaser-limits-test
       - name: Test local recovery hold policy
         run: |
           set -euo pipefail

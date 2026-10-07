@@ -19,6 +19,7 @@ The firmware software stack is complete through the authenticated Stage Device v
 - interrupted pulse / restart-during-Flash -> UNKNOWN
 - reset-class-aware state restoration
 - NVS physical-truth persistence
+- persistent validated relay/output timing limits
 - persist-before-PICK transaction controller
 - persistent P-256 device identity
 - Wi-Fi provisioning and reconnect policy

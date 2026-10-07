@@ -24,6 +24,7 @@ Implemented software layers:
 16. connection-loss deterministic Safe Off
 17. bounded same-session command result dedupe
 18. persistent 32-entry SHA-256 actuation replay fence written before controller execution
+19. persistent validated relay/output timing limits stored separately from physical truth
 
 ## Verified physical board
 
