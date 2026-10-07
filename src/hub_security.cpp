@@ -17,6 +17,9 @@
 #ifndef STAGECORE_FW_VERSION
 #define STAGECORE_FW_VERSION "0.1.0-dev.1"
 #endif
+#ifndef STAGECORE_OTA_ENABLED
+#define STAGECORE_OTA_ENABLED 0
+#endif
 
 namespace stagecore {
 namespace {
@@ -150,6 +153,17 @@ cJSON *capabilities_json() {
       return nullptr;
     }
   }
+#if STAGECORE_OTA_ENABLED == 1
+  {
+    cJSON *item =
+        cJSON_CreateString("device.maintenance.firmware-update");
+    if (item == nullptr || !cJSON_AddItemToArray(array, item)) {
+      if (item != nullptr) cJSON_Delete(item);
+      cJSON_Delete(array);
+      return nullptr;
+    }
+  }
+#endif
   return array;
 }
 
