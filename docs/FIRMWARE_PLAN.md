@@ -8,7 +8,7 @@ Implemented software layers:
 
 1. desired-state safety contract and state machine
 2. transaction controller with persist-before-PICK / commit-after-RELEASE
-3. NVS truth-state persistence and reset classification
+3. NVS truth-state persistence and reset classification; startup errors fail closed and never auto-erase safety state
 4. persistent P-256 identity
 5. Wi-Fi provisioning and reconnect
 6. `_stagecore-hub._tcp` discovery
