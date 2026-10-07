@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 concurrency:
   group: stagelaser-firmware-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -17,7 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - name: Verify exact clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
       - name: Test pure StageLaser state machine
         run: |
           set -euo pipefail
@@ -64,11 +76,17 @@ jobs:
     timeout-minutes: 20
     env:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
-      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
         with:
           ref: ${{ env.EXPECTED_SHA }}
+      - name: Verify exact clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -111,3 +129,50 @@ jobs:
           python tools/check_ota_candidate.py \
             --partitions partitions-ota-candidate-4mb.csv \
             --firmware .pio/build/esp32c3-ota-candidate-no-actuation/firmware.bin
+      - name: Stage exact unqualified firmware artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+          OUT="$RUNNER_TEMP/stagelaser-unqualified"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+
+          for spec in \
+            "default:esp32c3-ci-no-actuation" \
+            "gpio3-no-load:esp32c3-gpio3-no-load-qualification" \
+            "ota-candidate:esp32c3-ota-candidate-no-actuation"
+          do
+            NAME="${spec%%:*}"
+            ENV_NAME="${spec#*:}"
+            SRC=".pio/build/${ENV_NAME}/firmware.bin"
+            test -f "$SRC"
+            strings "$SRC" | grep -F "$EXPECTED_SHA"
+            cp "$SRC" "$OUT/${NAME}.bin"
+          done
+
+          (
+            cd "$OUT"
+            sha256sum default.bin gpio3-no-load.bin ota-candidate.bin > SHA256SUMS
+          )
+
+          {
+            echo "source_revision=$EXPECTED_SHA"
+            echo "platformio=6.2.0"
+            echo "qualification=UNQUALIFIED"
+            echo "actuation_enabled=0"
+            echo "output_gpio=-1"
+            echo "shared_power_qualified=0"
+          } > "$OUT/BUILDINFO"
+
+          git diff --quiet
+          git diff --cached --quiet
+
+      - name: Upload exact unqualified firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagecore-stagelaser-unqualified
+          path: ${{ runner.temp }}/stagelaser-unqualified/
+          retention-days: 7
+          if-no-files-found: error
