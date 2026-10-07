@@ -22,11 +22,15 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "command_replay_store.h"
+#include "firmware_update.h"
 #include "laser_command_contract.h"
 #include "laser_observation.h"
 
 #ifndef STAGECORE_FW_VERSION
 #define STAGECORE_FW_VERSION "0.1.0-dev"
+#endif
+#ifndef STAGECORE_OTA_ENABLED
+#define STAGECORE_OTA_ENABLED 0
 #endif
 
 namespace stagecore {
@@ -46,6 +50,7 @@ constexpr EventBits_t kDisconnectedBit = BIT3;
 constexpr EventBits_t kProtocolErrorBit = BIT4;
 constexpr EventBits_t kRuntimeReadyBit = BIT5;
 constexpr EventBits_t kCommandBit = BIT6;
+constexpr EventBits_t kMaintenanceBit = BIT7;
 
 struct PrepareRequest {
   bool present = false;
@@ -97,6 +102,7 @@ struct RuntimeContext {
   bool commands_enabled = false;
   bool runtime_ready_received = false;
   std::vector<std::string> pending_command_frames;
+  std::string pending_firmware_frame;
   stagelaser::CommandJournal journal;
 };
 
@@ -254,6 +260,10 @@ cJSON *capabilities_json() {
   for (const char *capability : kCaps) {
     cJSON_AddItemToArray(caps, cJSON_CreateString(capability));
   }
+#if STAGECORE_OTA_ENABLED == 1
+  cJSON_AddItemToArray(
+      caps, cJSON_CreateString("device.maintenance.firmware-update"));
+#endif
   return caps;
 }
 
@@ -486,6 +496,27 @@ bool queue_command(RuntimeContext *context, const std::string &text) {
   return accepted;
 }
 
+bool queue_firmware_update(RuntimeContext *context,
+                           const std::string &text) {
+#if STAGECORE_OTA_ENABLED == 1
+  if (context == nullptr || context->lock == nullptr || text.empty()) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    return false;
+  }
+  const bool accepted = context->pending_firmware_frame.empty();
+  if (accepted) context->pending_firmware_frame = text;
+  xSemaphoreGive(context->lock);
+  if (accepted) xEventGroupSetBits(context->events, kMaintenanceBit);
+  return accepted;
+#else
+  (void)context;
+  (void)text;
+  return false;
+#endif
+}
+
 bool handle_complete_text(RuntimeContext *context, const std::string &text) {
   cJSON *root = cJSON_ParseWithLength(text.data(), text.size());
   if (root == nullptr) return false;
@@ -508,6 +539,10 @@ bool handle_complete_text(RuntimeContext *context, const std::string &text) {
     ok = parse_runtime_ready(context, root);
   } else if (ok && std::strcmp(type->valuestring, "command.execute") == 0) {
     ok = queue_command(context, text);
+  } else if (ok &&
+             std::strcmp(type->valuestring,
+                         "maintenance.firmware_update") == 0) {
+    ok = queue_firmware_update(context, text);
   } else {
     ok = false;
   }
@@ -581,6 +616,77 @@ esp_err_t send_text(esp_websocket_client_handle_t client,
   return sent == static_cast<int>(message.size()) ? ESP_OK : ESP_FAIL;
 }
 
+struct MaintenanceProgressContext {
+  esp_websocket_client_handle_t client = nullptr;
+  std::string device_id;
+  int64_t connection_generation = 0;
+  std::string update_id;
+};
+
+std::string make_firmware_maintenance_result(
+    const std::string &device_id,
+    int64_t connection_generation,
+    const std::string &update_id,
+    const char *state,
+    const char *detail,
+    const stagelaser::FirmwareUpdateFailure *failure = nullptr) {
+  if (device_id.empty() || connection_generation <= 0 ||
+      update_id.empty() || state == nullptr || state[0] == '\0') {
+    return {};
+  }
+
+  cJSON *root = cJSON_CreateObject();
+  if (root == nullptr) return {};
+  cJSON_AddStringToObject(root, "type", "maintenance.firmware_update.result");
+  cJSON_AddNumberToObject(root, "schema_version", 2);
+  cJSON_AddStringToObject(root, "device_id", device_id.c_str());
+  cJSON_AddNumberToObject(
+      root, "connection_generation",
+      static_cast<double>(connection_generation));
+  cJSON_AddStringToObject(root, "update_id", update_id.c_str());
+  cJSON_AddStringToObject(root, "maintenance_state", state);
+  if (detail != nullptr && detail[0] != '\0') {
+    cJSON_AddStringToObject(root, "detail", detail);
+  }
+  if (failure != nullptr && !failure->error_code.empty()) {
+    cJSON *error = cJSON_CreateObject();
+    if (error == nullptr) {
+      cJSON_Delete(root);
+      return {};
+    }
+    cJSON_AddStringToObject(
+        error, "error_code", failure->error_code.c_str());
+    cJSON_AddStringToObject(error, "category", "MAINTENANCE");
+    cJSON_AddStringToObject(
+        error, "message",
+        failure->detail.empty() ? "Firmware update failed"
+                                : failure->detail.c_str());
+    cJSON_AddBoolToObject(error, "retryable", failure->retryable);
+    cJSON_AddStringToObject(
+        error, "affected_entity_id", device_id.c_str());
+    cJSON_AddItemToObject(root, "error", error);
+  }
+
+  const std::string out = print_json(root);
+  cJSON_Delete(root);
+  return out;
+}
+
+esp_err_t firmware_progress(void *opaque,
+                            const char *state,
+                            const char *detail) {
+  auto *progress = static_cast<MaintenanceProgressContext *>(opaque);
+  if (progress == nullptr) return ESP_ERR_INVALID_ARG;
+  return send_text(
+      progress->client,
+      make_firmware_maintenance_result(
+          progress->device_id,
+          progress->connection_generation,
+          progress->update_id,
+          state,
+          detail));
+}
+
 bool take_prepare(RuntimeContext *context, PrepareRequest *request) {
   if (context == nullptr || request == nullptr || context->lock == nullptr) {
     return false;
@@ -614,6 +720,29 @@ bool take_command(RuntimeContext *context, std::string *frame) {
   xSemaphoreGive(context->lock);
   if (!more) xEventGroupClearBits(context->events, kCommandBit);
   return present;
+}
+
+bool take_firmware_update(RuntimeContext *context, std::string *frame) {
+#if STAGECORE_OTA_ENABLED == 1
+  if (context == nullptr || frame == nullptr || context->lock == nullptr) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    return false;
+  }
+  const bool present = !context->pending_firmware_frame.empty();
+  if (present) {
+    *frame = std::move(context->pending_firmware_frame);
+    context->pending_firmware_frame.clear();
+  }
+  xSemaphoreGive(context->lock);
+  if (present) xEventGroupClearBits(context->events, kMaintenanceBit);
+  return present;
+#else
+  (void)context;
+  (void)frame;
+  return false;
+#endif
 }
 
 bool known_safe_off(const stagelaser::LaserController &laser) {
@@ -1267,6 +1396,116 @@ esp_err_t run_stage_device_runtime(
         err = ESP_ERR_INVALID_STATE;
         break;
       }
+
+#if STAGECORE_OTA_ENABLED == 1
+      std::string firmware_frame;
+      if ((bits & kMaintenanceBit) &&
+          take_firmware_update(&context, &firmware_frame)) {
+        stagelaser::FirmwareUpdateRequest firmware_request;
+        stagelaser::FirmwareUpdateFailure firmware_failure;
+        const esp_err_t parse_err =
+            stagelaser::parse_firmware_update_request(
+                firmware_frame,
+                context.device_id,
+                context.connection_generation,
+                &firmware_request,
+                &firmware_failure);
+        if (parse_err != ESP_OK) {
+          if (!firmware_request.update_id.empty()) {
+            err = send_text(
+                client,
+                make_firmware_maintenance_result(
+                    context.device_id,
+                    context.connection_generation,
+                    firmware_request.update_id,
+                    "REJECTED",
+                    firmware_failure.detail.c_str(),
+                    &firmware_failure));
+            if (err != ESP_OK) break;
+            continue;
+          }
+          err = parse_err;
+          break;
+        }
+
+        if (command_state.pending || !known_safe_off(*laser)) {
+          stagelaser::FirmwareUpdateFailure unsafe;
+          unsafe.error_code = "FIRMWARE_DEVICE_NOT_SAFE";
+          unsafe.detail =
+              "StageLaser must be DISARMED, stable OFF and idle before firmware maintenance";
+          unsafe.retryable = true;
+          err = send_text(
+              client,
+              make_firmware_maintenance_result(
+                  context.device_id,
+                  context.connection_generation,
+                  firmware_request.update_id,
+                  "REJECTED",
+                  unsafe.detail.c_str(),
+                  &unsafe));
+          if (err != ESP_OK) break;
+          continue;
+        }
+
+        // Freeze ordinary runtime command authority locally before accepting
+        // maintenance. Firmware update is not a Cue/show command.
+        context.commands_enabled = false;
+        err = send_text(
+            client,
+            make_firmware_maintenance_result(
+                context.device_id,
+                context.connection_generation,
+                firmware_request.update_id,
+                "ACCEPTED",
+                "StageLaser accepted firmware maintenance while safely OFF"));
+        if (err != ESP_OK) break;
+
+        MaintenanceProgressContext progress;
+        progress.client = client;
+        progress.device_id = context.device_id;
+        progress.connection_generation = context.connection_generation;
+        progress.update_id = firmware_request.update_id;
+
+        firmware_failure = stagelaser::FirmwareUpdateFailure{};
+        const esp_err_t update_err =
+            stagelaser::perform_firmware_update(
+                hub,
+                credential,
+                firmware_request,
+                &firmware_progress,
+                &progress,
+                &firmware_failure);
+        if (update_err != ESP_OK) {
+          if (firmware_failure.error_code !=
+              "FIRMWARE_PROGRESS_SEND_FAILED") {
+            err = send_text(
+                client,
+                make_firmware_maintenance_result(
+                    context.device_id,
+                    context.connection_generation,
+                    firmware_request.update_id,
+                    "FAILED",
+                    firmware_failure.detail.c_str(),
+                    &firmware_failure));
+          } else {
+            err = update_err;
+          }
+          break;
+        }
+
+        err = send_text(
+            client,
+            make_firmware_maintenance_result(
+                context.device_id,
+                context.connection_generation,
+                firmware_request.update_id,
+                "REBOOTING",
+                "Verified firmware selected; rebooting into rollback-protected candidate"));
+        if (err != ESP_OK) break;
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+      }
+#endif
 
       PrepareRequest prepare;
       if ((bits & kPrepareBit) && take_prepare(&context, &prepare)) {
