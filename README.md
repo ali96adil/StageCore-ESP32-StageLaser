@@ -21,6 +21,10 @@ The firmware software stack is complete through the authenticated Stage Device v
 - NVS physical-truth persistence
 - persistent validated relay/output timing limits
 - OTA candidate safe-boot rollback confirmation after local persistence/configuration restore
+- authenticated candidate-only firmware maintenance capability
+- Hub-local TLS 1.3 firmware download using the existing StageCore session
+- streaming write to the inactive OTA slot with exact size + SHA-256 verification before boot selection
+- explicit ACCEPTED → DOWNLOADING → WRITING → VERIFYING → REBOOTING progress reporting
 - boot-time physical-presence Hub trust recovery source path, disabled until an input GPIO is physically qualified
 - persist-before-PICK transaction controller
 - persistent P-256 device identity
@@ -70,7 +74,7 @@ STAGECORE_LASER_LOCAL_RECOVERY_GPIO=-1
 STAGECORE_LASER_LOCAL_RECOVERY_QUALIFIED=0
 ```
 
-The physical StageLaser board has been verified with esptool as ESP32-C3 QFN32 rev v0.4 with embedded XMC 4 MB flash and a 40 MHz crystal. The default partition table is still **CI-only**. The separate 4 MB dual-slot OTA candidate is structurally CI-validated and uses application rollback, but OTA transport plus physical update/rollback behavior are not qualified yet.
+The physical StageLaser board has been verified with esptool as ESP32-C3 QFN32 rev v0.4 with embedded XMC 4 MB flash and a 40 MHz crystal. The default partition table is still **CI-only**. The separate 4 MB dual-slot OTA candidate is structurally CI-validated, uses application rollback, and now contains the controlled StageCore OTA transport. The default image does not advertise firmware maintenance. Physical update/rollback behavior is still not qualified.
 
 ## Hardware gate
 
