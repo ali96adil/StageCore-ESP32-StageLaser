@@ -305,13 +305,16 @@ esp_err_t perform_firmware_update(
     const FirmwareUpdateRequest &request,
     FirmwareProgressCallback progress,
     void *progress_ctx,
+    const esp_partition_t **verified_partition,
     FirmwareUpdateFailure *failure) {
-  if (failure == nullptr || hub.address.empty() || hub.port == 0 ||
+  if (failure == nullptr || verified_partition == nullptr ||
+      hub.address.empty() || hub.port == 0 ||
       hub.certificate_der.empty() || credential.token.empty() ||
       request.artifact_path.empty() || request.artifact_size <= 0) {
     return ESP_ERR_INVALID_ARG;
   }
   *failure = FirmwareUpdateFailure{};
+  *verified_partition = nullptr;
 
   const esp_partition_t *target = esp_ota_get_next_update_partition(nullptr);
   if (target == nullptr ||
@@ -514,12 +517,7 @@ esp_err_t perform_firmware_update(
     goto cleanup;
   }
 
-  err = esp_ota_set_boot_partition(target);
-  if (err != ESP_OK) {
-    set_failure(failure, "FIRMWARE_BOOT_SELECTION_FAILED",
-                "Verified OTA image could not be selected for next boot", false);
-    goto cleanup;
-  }
+  *verified_partition = target;
 
 cleanup:
   if (sha_active) {
@@ -538,10 +536,29 @@ cleanup:
              failure->error_code.c_str(), failure->detail.c_str());
   } else {
     ESP_LOGI(kTag,
-             "verified firmware staged in OTA partition %s for next boot",
+             "verified firmware staged in inactive OTA partition %s",
              target->label);
   }
   return err;
+}
+
+esp_err_t commit_verified_firmware(
+    const esp_partition_t *verified_partition,
+    FirmwareUpdateFailure *failure) {
+  if (failure == nullptr || verified_partition == nullptr ||
+      verified_partition->type != ESP_PARTITION_TYPE_APP) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  *failure = FirmwareUpdateFailure{};
+  const esp_err_t err = esp_ota_set_boot_partition(verified_partition);
+  if (err != ESP_OK) {
+    set_failure(failure, "FIRMWARE_BOOT_SELECTION_FAILED",
+                "Verified OTA image could not be selected for next boot", false);
+    return err;
+  }
+  ESP_LOGI(kTag, "verified OTA partition %s selected for next boot",
+           verified_partition->label);
+  return ESP_OK;
 }
 
 }  // namespace stagecore::stagelaser
