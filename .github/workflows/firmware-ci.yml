@@ -164,6 +164,8 @@ jobs:
             echo "actuation_enabled=0"
             echo "output_gpio=-1"
             echo "shared_power_qualified=0"
+            echo "local_recovery_gpio=-1"
+            echo "local_recovery_qualified=0"
           } > "$OUT/BUILDINFO"
 
           git diff --quiet
