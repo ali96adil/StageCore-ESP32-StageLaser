@@ -13,9 +13,20 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "mbedtls/sha256.h"
+#include "ota_boot_guard.h"
+#include "sdkconfig.h"
 
 #ifndef STAGECORE_FW_VERSION
 #define STAGECORE_FW_VERSION "0.1.0-dev.1"
+#endif
+#ifndef STAGECORE_OTA_ENABLED
+#define STAGECORE_OTA_ENABLED 0
+#endif
+
+#if STAGECORE_OTA_ENABLED == 1 && \
+    (!defined(CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE) || \
+     CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE != 1)
+#error "StageLaser OTA capability requires ESP-IDF application rollback"
 #endif
 
 namespace stagecore::stagelaser {
@@ -543,21 +554,39 @@ cleanup:
 }
 
 esp_err_t commit_verified_firmware(
+    const FirmwareUpdateRequest &request,
     const esp_partition_t *verified_partition,
     FirmwareUpdateFailure *failure) {
   if (failure == nullptr || verified_partition == nullptr ||
-      verified_partition->type != ESP_PARTITION_TYPE_APP) {
+      verified_partition->type != ESP_PARTITION_TYPE_APP ||
+      request.update_id.empty() || request.target_version.empty() ||
+      request.source_revision.empty()) {
     return ESP_ERR_INVALID_ARG;
   }
   *failure = FirmwareUpdateFailure{};
-  const esp_err_t err = esp_ota_set_boot_partition(verified_partition);
+
+  esp_err_t err = ota_record_expected_boot(
+      request.update_id, request.target_version, request.source_revision);
   if (err != ESP_OK) {
+    set_failure(failure, "FIRMWARE_BOOT_IDENTITY_PERSIST_FAILED",
+                "Could not persist the exact expected OTA image identity",
+                false);
+    return err;
+  }
+
+  err = esp_ota_set_boot_partition(verified_partition);
+  if (err != ESP_OK) {
+    (void)ota_clear_expected_boot();
     set_failure(failure, "FIRMWARE_BOOT_SELECTION_FAILED",
                 "Verified OTA image could not be selected for next boot", false);
     return err;
   }
-  ESP_LOGI(kTag, "verified OTA partition %s selected for next boot",
-           verified_partition->label);
+  ESP_LOGI(kTag,
+           "verified OTA partition %s selected for next boot; "
+           "expected target=%s rev=%s",
+           verified_partition->label,
+           request.target_version.c_str(),
+           request.source_revision.c_str());
   return ESP_OK;
 }
 
