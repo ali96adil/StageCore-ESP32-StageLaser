@@ -58,10 +58,15 @@ constexpr uint32_t kPulseMs = 180;
   if (gpio_config(&cfg) != ESP_OK || gpio_set_level(kPin, 0) != ESP_OK)
     halt_safe("cannot configure safe relay output");
 
+  // Native USB-Serial/JTAG may re-enumerate after reset. Repeat the
+  // non-actuating bench banner only after the host had time to reconnect.
+  // GPIO3 remains LOW throughout this wait.
+  vTaskDelay(pdMS_TO_TICKS(2000) > 0 ? pdMS_TO_TICKS(2000) : 1);
   ESP_LOGW(kTag, "RELAY-ONLY BENCH MODE: NO LASER CONNECTED TO COM/NO/NC");
   ESP_LOGW(kTag, "No Wi-Fi, StageCore connection, automatic pulse, or repeated pulse");
   ESP_LOGW(kTag, "Keep laser power OFF and laser leads physically disconnected");
   ESP_LOGI(kTag, "GPIO3 LOW; relay must be released");
+  ESP_LOGI(kTag, "STATUS = read-only status; PULSE = one manual 180 ms pulse");
   ESP_LOGI(kTag, "To issue ONE manual 180 ms pulse, type PULSE and press Enter");
 
   char line[40]{};
@@ -76,8 +81,14 @@ constexpr uint32_t kPulseMs = 180;
     while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
       line[--len] = '\0';
     }
+    if (std::strcmp(line, "STATUS") == 0) {
+      // Read-only: never manipulates GPIO nor clears the one-pulse fence.
+      ESP_LOGI(kTag, "BENCH STATUS: GPIO3 LOW, pulse_used=%s, StageCore=disabled",
+               fired ? "yes" : "no");
+      continue;
+    }
     if (std::strcmp(line, "PULSE") != 0) {
-      ESP_LOGW(kTag, "Ignored input; exact command is PULSE");
+      ESP_LOGW(kTag, "Ignored input; valid commands: STATUS or PULSE");
       continue;
     }
     if (fired) {
