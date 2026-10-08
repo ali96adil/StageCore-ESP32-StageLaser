@@ -46,6 +46,15 @@ cJSON *make_observed_state_json(const StateMachine &machine,
 
   cJSON_AddNumberToObject(root, "schema_version", 1);
   add_optional_string(root, "firmware_version", metadata.firmware_version);
+  add_optional_string(root, "build_revision", metadata.build_revision);
+  // Build flags are telemetry only: never use these fields as physical
+  // emission feedback, Safe Off attestation, or permission to actuate.
+  cJSON_AddBoolToObject(root, "actuation_enabled", metadata.actuation_enabled);
+  cJSON_AddBoolToObject(root, "shared_power_qualified",
+                        metadata.shared_power_qualified);
+  cJSON_AddBoolToObject(root, "gpio_no_load_qualification",
+                        metadata.gpio_no_load_qualification);
+  cJSON_AddNumberToObject(root, "output_gpio", metadata.output_gpio);
   cJSON_AddStringToObject(root, "control_contract_version", kControlContract);
   add_optional_string(root, "boot_id", metadata.boot_id);
   if (metadata.uptime_seconds >= 0) {
@@ -53,6 +62,8 @@ cJSON *make_observed_state_json(const StateMachine &machine,
                             static_cast<double>(metadata.uptime_seconds));
   }
   add_optional_string(root, "reset_reason", metadata.reset_reason);
+  cJSON_AddNumberToObject(root, "reset_reason_code",
+                          metadata.reset_reason_code);
   if (metadata.has_wifi_rssi) {
     cJSON_AddNumberToObject(root, "wifi_rssi_dbm", metadata.wifi_rssi_dbm);
   }
