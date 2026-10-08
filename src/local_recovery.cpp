@@ -49,10 +49,11 @@ bool known_safe_off(const LaserController &laser) {
 }  // namespace
 
 esp_err_t maybe_run_boot_hub_trust_reset(const LaserController &laser) {
-  const int recovery_gpio = STAGECORE_LASER_LOCAL_RECOVERY_GPIO;
-  if (recovery_gpio < 0) {
-    return ESP_OK;
-  }
+#if STAGECORE_LASER_LOCAL_RECOVERY_QUALIFIED == 0
+  (void)laser;
+  return ESP_OK;
+#else
+  constexpr int recovery_gpio = STAGECORE_LASER_LOCAL_RECOVERY_GPIO;
 
   gpio_config_t config{};
   config.pin_bit_mask = 1ULL << static_cast<unsigned>(recovery_gpio);
@@ -107,6 +108,7 @@ esp_err_t maybe_run_boot_hub_trust_reset(const LaserController &laser) {
   (void)policy.sample(false, 0);
   ESP_LOGI(kTag, "physical recovery hold released before trust reset");
   return ESP_OK;
+#endif
 }
 
 }  // namespace stagecore::stagelaser
