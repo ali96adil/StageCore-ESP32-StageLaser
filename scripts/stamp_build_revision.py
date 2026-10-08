@@ -29,7 +29,7 @@ revision = expected or actual
 if not revision:
     revision = "unknown"
 
-if not expected and revision != "unknown":
+if revision != "unknown":
     try:
         dirty = git(project_dir, "status", "--porcelain", "--untracked-files=normal")
     except Exception:
