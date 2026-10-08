@@ -3,11 +3,8 @@ idf_component_register(
     "main.cpp"
     "config_store.cpp"
     "command_replay_store.cpp"
-    "device_identity.cpp"
     "firmware_update.cpp"
     "gpio_no_load_qualification.cpp"
-    "hub_discovery.cpp"
-    "hub_security.cpp"
     "laser_state_machine.cpp"
     "laser_observation.cpp"
     "laser_controller.cpp"
@@ -22,7 +19,6 @@ idf_component_register(
     "provisioning.cpp"
     "relay_output.cpp"
     "stage_device_runtime.cpp"
-    "trusted_clock.cpp"
   INCLUDE_DIRS "."
   REQUIRES
     app_update
@@ -39,4 +35,5 @@ idf_component_register(
     mbedtls
     mdns
     nvs_flash
+    stagecore_foundation
 )

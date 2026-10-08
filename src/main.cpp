@@ -30,6 +30,9 @@
 #ifndef STAGECORE_LASER_SHARED_POWER_QUALIFIED
 #define STAGECORE_LASER_SHARED_POWER_QUALIFIED 0
 #endif
+#ifndef STAGECORE_OTA_ENABLED
+#define STAGECORE_OTA_ENABLED 0
+#endif
 
 namespace {
 constexpr char kTag[] = "stagelaser";
@@ -51,6 +54,28 @@ std::string default_display_name(const std::string &device_id) {
     return "StageLaser-" + device_id.substr(device_id.size() - 6);
   }
   return "StageLaser";
+}
+
+stagecore::FoundationDeviceDescriptor foundation_descriptor() {
+  stagecore::FoundationDeviceDescriptor descriptor;
+  descriptor.hostname_prefix = "stagecore-laser-";
+  descriptor.platform = "esp32";
+  descriptor.architecture = "riscv32";
+  descriptor.firmware_version = STAGECORE_FW_VERSION;
+  descriptor.capabilities = {
+      "laser.arm",
+      "laser.disarm",
+      "laser.state.set",
+      "laser.flash.start",
+      "laser.flash.stop",
+      "laser.safe_off",
+      "laser.state.read",
+      "laser.state.resync",
+  };
+#if STAGECORE_OTA_ENABLED == 1
+  descriptor.capabilities.push_back("device.maintenance.firmware-update");
+#endif
+  return descriptor;
 }
 
 stagecore::stagelaser::ResetClass classify_reset_reason(esp_reset_reason_t reason) {
@@ -137,6 +162,9 @@ extern "C" void app_main(void) {
   if (identity.LoadOrCreate() != ESP_OK) {
     hold_safe_failure("persistent P-256 identity unavailable");
   }
+  stagecore::FoundationStore &foundation = stagecore::foundation_store();
+  const stagecore::FoundationDeviceDescriptor descriptor =
+      foundation_descriptor();
   ESP_LOGI(kTag, "device_id=%s", identity.device_id().c_str());
 
   stagecore::DeviceConfig config;
@@ -206,7 +234,7 @@ extern "C" void app_main(void) {
     failed_network_windows = 0;
 
     stagecore::VerifiedHub hub;
-    if (stagecore::discover_and_verify_hub(&hub) != ESP_OK) {
+    if (stagecore::discover_and_verify_hub(&foundation, &hub) != ESP_OK) {
       ESP_LOGW(kTag, "verified StageCore Hub not available yet");
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
@@ -216,7 +244,8 @@ extern "C" void app_main(void) {
 
     stagecore::RuntimeCredential credential;
     if (stagecore::ensure_paired_and_authenticate(
-            hub, &identity, config.display_name, &credential) != ESP_OK) {
+            hub, &identity, descriptor, config.display_name, &credential) !=
+        ESP_OK) {
       ESP_LOGW(kTag, "Hub pairing/authentication not ready; retrying");
       vTaskDelay(pdMS_TO_TICKS(3000));
       continue;

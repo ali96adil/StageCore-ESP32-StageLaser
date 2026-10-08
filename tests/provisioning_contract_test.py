@@ -10,21 +10,29 @@ class ProvisioningContract(unittest.TestCase):
         self.assertNotIn("Project ID", source)
         self.assertIn("Project and Runtime Snapshot assignment are owned by the", source)
 
-    def test_setup_and_recovery_are_password_protected_and_non_actuating(self):
+    def test_setup_and_recovery_use_shared_foundation_policy_and_are_non_actuating(self):
         source = (ROOT / "src" / "provisioning.cpp").read_text()
         store = (ROOT / "src" / "config_store.cpp").read_text()
         main = (ROOT / "src" / "main.cpp").read_text()
+        manifest = (ROOT / "src" / "idf_component.yml").read_text()
 
         self.assertIn("WIFI_AUTH_WPA2_PSK", source)
-        self.assertIn('#define STAGECORE_SETUP_AP_PASSWORD "12345678"', source)
-        self.assertIn("std::string effective_setup_ap_password()", source)
-        self.assertIn('kSetupAPPasswordKey[] = "setup_ap_pass"', store)
-        self.assertIn("save_setup_ap_password", store)
-        self.assertIn("clear_setup_ap_password", store)
+        self.assertIn('#include "foundation_contract.h"', source)
+        self.assertIn("kDefaultSetupAPPassword", source)
+        self.assertIn("foundation_store().EffectiveSetupAPPassword", source)
+        self.assertIn("foundation_store().SaveSetupAPPasswordOverride", store)
+        self.assertIn("foundation_store().ResetSetupAPPasswordToDefault", store)
+        self.assertIn("stagecore_foundation:", manifest)
+        self.assertIn("https://github.com/ali96adil/StageCore.git", manifest)
+        self.assertIn(
+            "version: d6946da3f003e8c0c2a72216804ef2035bf1288c",
+            manifest,
+        )
         self.assertIn("StageLaser-Recovery-", source)
         self.assertIn("WIFI_MODE_APSTA", source)
         self.assertIn("run_recovery_portal", main)
         self.assertIn("kRecoveryAfterFailed30sWindows = 3", main)
+        self.assertNotIn("STAGECORE_SETUP_AP_PASSWORD", source)
         self.assertNotIn("password=%s", source)
         self.assertNotIn("random_ap_password", source)
         self.assertNotIn("esp_random()", source)
@@ -33,12 +41,15 @@ class ProvisioningContract(unittest.TestCase):
 
     def test_setup_ap_maintenance_is_v2_authenticated_and_non_actuating(self):
         source = (ROOT / "src" / "stage_device_runtime.cpp").read_text()
+        store = (ROOT / "src" / "config_store.cpp").read_text()
         self.assertIn("device.maintenance.setup-ap-password", source)
         self.assertIn("maintenance.setup_ap_password", source)
         self.assertIn("maintenance.setup_ap_password.result", source)
         self.assertIn("connection_generation", source)
         self.assertIn("save_setup_ap_password", source)
         self.assertIn("clear_setup_ap_password", source)
+        self.assertIn("SaveSetupAPPasswordOverride", store)
+        self.assertIn("ResetSetupAPPasswordToDefault", store)
         self.assertNotIn('cJSON_AddStringToObject(root, "password"', source)
 
         start = source.index("esp_err_t process_setup_ap_maintenance")
@@ -52,6 +63,19 @@ class ProvisioningContract(unittest.TestCase):
             "pulse",
         ):
             self.assertNotIn(forbidden, maintenance)
+
+    def test_local_foundation_duplicates_are_removed(self):
+        for name in (
+            "device_identity.cpp",
+            "device_identity.h",
+            "hub_discovery.cpp",
+            "hub_discovery.h",
+            "hub_security.cpp",
+            "hub_security.h",
+            "trusted_clock.cpp",
+            "trusted_clock.h",
+        ):
+            self.assertFalse((ROOT / "src" / name).exists(), name)
 
 if __name__ == "__main__":
     unittest.main()
