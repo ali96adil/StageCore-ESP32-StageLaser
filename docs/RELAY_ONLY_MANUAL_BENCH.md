@@ -37,15 +37,19 @@ pio run -e esp32c3-relay-only-manual-bench -t upload --upload-port /dev/cu.usbmo
 pio device monitor -p /dev/cu.usbmodem101 -b 115200
 ```
 
-Expected idle messages include:
+Expected idle messages include (repeated after a 2-second USB reconnect settle period):
 
 ```text
 RELAY-ONLY BENCH MODE: NO LASER CONNECTED TO COM/NO/NC
 GPIO3 LOW; relay must be released
+STATUS = read-only status; PULSE = one manual 180 ms pulse
 To issue ONE manual 180 ms pulse, type PULSE and press Enter
 ```
 
 1. Boot and reset repeatedly, verify relay stays inactive.
+   If USB reconnects after the initial banner, wait for the delayed banner.
+   Type exact uppercase `STATUS` followed by Enter to check read-only
+   state; expect `GPIO3 LOW, pulse_used=no` without relay motion.
 2. With the laser disconnected, type exact uppercase `PULSE` then Enter
    in the USB serial console. Only one HIGH pulse of 180 ms is attempted.
 3. Watch for relay activation and release; verify COM/NO closure using
