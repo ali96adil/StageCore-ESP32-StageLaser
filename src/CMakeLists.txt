@@ -18,6 +18,7 @@ idf_component_register(
     "ota_boot_guard.cpp"
     "provisioning.cpp"
     "relay_output.cpp"
+    "relay_bench_qualification.cpp"
     "stage_device_runtime.cpp"
   INCLUDE_DIRS "."
   REQUIRES
