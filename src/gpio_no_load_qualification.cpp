@@ -31,7 +31,10 @@ bool gpio_no_load_qualification_enabled() {
 }
 
 esp_err_t gpio_no_load_qualification_init() {
-  if (!gpio_no_load_qualification_enabled()) return ESP_OK;
+#if STAGECORE_GPIO_NO_LOAD_QUALIFICATION == 1
+  static_assert(STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO >= 0 &&
+                    STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO <= 21,
+                "GPIO no-load qualification requires a valid ESP32-C3 GPIO");
 
   const auto pin =
       static_cast<gpio_num_t>(STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO);
@@ -58,6 +61,9 @@ esp_err_t gpio_no_load_qualification_init() {
            "must remain disconnected",
            STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO);
   return ESP_OK;
+#else
+  return ESP_OK;
+#endif
 }
 
 }  // namespace stagecore::stagelaser
