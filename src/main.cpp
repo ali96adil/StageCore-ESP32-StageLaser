@@ -190,8 +190,12 @@ extern "C" void app_main(void) {
   }
   // Native USB-Serial/JTAG re-enumerates on reset. On the qualified C3 board,
   // the host can reconnect after the earliest app logs have already been
-  // emitted. Repeat a compact, non-secret qualification summary here after
-  // persistent safety state, identity and config storage are all restored.
+  // emitted. In NO-ACTUATION qualification builds only, allow a short host
+  // reconnect settle window before repeating the non-secret boot summary.
+#if STAGECORE_LASER_ACTUATION_ENABLED == 0
+  constexpr uint32_t kQualificationUsbSettleMs = 1200;
+  vTaskDelay(pdMS_TO_TICKS(kQualificationUsbSettleMs));
+#endif
   ESP_LOGI(kTag, "StageLaser firmware %s (%s)", STAGECORE_FW_VERSION,
            STAGECORE_BUILD_REVISION);
 #if STAGECORE_LASER_ACTUATION_ENABLED == 0
