@@ -33,6 +33,9 @@
 #ifndef STAGECORE_OTA_ENABLED
 #define STAGECORE_OTA_ENABLED 0
 #endif
+#ifndef STAGECORE_LASER_ACTUATION_ENABLED
+#define STAGECORE_LASER_ACTUATION_ENABLED 0
+#endif
 
 namespace {
 constexpr char kTag[] = "stagelaser";
@@ -185,6 +188,24 @@ extern "C" void app_main(void) {
   if (stagecore::stagelaser::ota_confirm_safe_boot_if_pending() != ESP_OK) {
     hold_safe_failure("OTA candidate safe-boot confirmation failed");
   }
+  // Native USB-Serial/JTAG re-enumerates on reset. On the qualified C3 board,
+  // the host can reconnect after the earliest app logs have already been
+  // emitted. Repeat a compact, non-secret qualification summary here after
+  // persistent safety state, identity and config storage are all restored.
+  ESP_LOGI(kTag, "StageLaser firmware %s (%s)", STAGECORE_FW_VERSION,
+           STAGECORE_BUILD_REVISION);
+#if STAGECORE_LASER_ACTUATION_ENABLED == 0
+  ESP_LOGW(kTag, "NO-ACTUATION build: relay GPIO is intentionally disabled");
+#endif
+  ESP_LOGI(kTag,
+           "laser truth restored; persisted=%s reset_reason=%d "
+           "shared_power_qualified=%s resync_required=%s",
+           persisted_found ? "yes" : "no",
+           static_cast<int>(boot_reset_reason),
+           shared_power_qualified ? "yes" : "no",
+           laser.machine().resync_required() ? "yes" : "no");
+  ESP_LOGI(kTag, "device_id=%s", identity.device_id().c_str());
+
   if (!config.complete()) {
     stagecore::run_provisioning_portal(
         identity.device_id(), default_display_name(identity.device_id()));
