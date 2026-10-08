@@ -94,6 +94,18 @@ jobs:
         run: python -m pip install --disable-pip-version-check platformio==6.2.0
       - name: Build CI no-actuation image
         run: pio run -e esp32c3-ci-no-actuation
+      - name: Prove managed Foundation TLS pin bootstrap matches locked candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          FOUNDATION="managed_components/stagecore_foundation/src/hub_discovery.cpp"
+          test -f "$FOUNDATION"
+          grep -Fq 'version: 4495a381cc40f06f44e0a16da4a4dc82a9bceb6c' src/idf_component.yml
+          grep -Fq 'mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL)' "$FOUNDATION"
+          if grep -Fq 'esp_tls_conn_new_sync(' "$FOUNDATION"; then
+            echo "stale TLS bootstrap implementation in managed Foundation" >&2
+            exit 1
+          fi
       - name: Prove artifact is no-actuation and OTA-disabled
         run: |
           set -euo pipefail
