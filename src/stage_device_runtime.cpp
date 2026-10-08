@@ -904,7 +904,7 @@ esp_err_t drive_safe_off(stagelaser::LaserController *laser) {
     if (outcome.fault != stagelaser::ControllerFault::kNone) {
       return ESP_ERR_INVALID_STATE;
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(5) > 0 ? pdMS_TO_TICKS(5) : 1);
   }
   return ESP_OK;
 }
@@ -1735,7 +1735,7 @@ esp_err_t run_stage_device_runtime(
         last_observation_us = now_us;
       }
 
-      vTaskDelay(pdMS_TO_TICKS(5));
+      vTaskDelay(pdMS_TO_TICKS(5) > 0 ? pdMS_TO_TICKS(5) : 1);
     }
   }
 
