@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-FOUNDATION_SHA = "d6946da3f003e8c0c2a72216804ef2035bf1288c"
+FOUNDATION_SHA = "4495a381cc40f06f44e0a16da4a4dc82a9bceb6c"
 
 class IdentityConfigContract(unittest.TestCase):
     def test_v2_config_has_no_project_authority(self):
