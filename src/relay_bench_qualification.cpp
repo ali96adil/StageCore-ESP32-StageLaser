@@ -72,10 +72,9 @@ constexpr uint32_t kPulseMs = 180;
       vTaskDelay(pdMS_TO_TICKS(10) > 0 ? pdMS_TO_TICKS(10) : 1);
       continue;
     }
-    const size_t len = std::strlen(line);
-    while (len > 0 && (line[std::strlen(line) - 1] == '\n' ||
-                       line[std::strlen(line) - 1] == '\r')) {
-      line[std::strlen(line) - 1] = '\0';
+    size_t len = std::strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+      line[--len] = '\0';
     }
     if (std::strcmp(line, "PULSE") != 0) {
       ESP_LOGW(kTag, "Ignored input; exact command is PULSE");
