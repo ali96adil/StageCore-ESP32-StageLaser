@@ -36,6 +36,12 @@
 #ifndef STAGECORE_LASER_ACTUATION_ENABLED
 #define STAGECORE_LASER_ACTUATION_ENABLED 0
 #endif
+#ifndef STAGECORE_GPIO_NO_LOAD_QUALIFICATION
+#define STAGECORE_GPIO_NO_LOAD_QUALIFICATION 0
+#endif
+#ifndef STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO
+#define STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO -1
+#endif
 
 namespace {
 constexpr char kTag[] = "stagelaser";
@@ -209,6 +215,12 @@ extern "C" void app_main(void) {
            shared_power_qualified ? "yes" : "no",
            laser.machine().resync_required() ? "yes" : "no");
   ESP_LOGI(kTag, "device_id=%s", identity.device_id().c_str());
+#if STAGECORE_GPIO_NO_LOAD_QUALIFICATION == 1
+  ESP_LOGW(kTag,
+           "GPIO%d NO-LOAD QUALIFICATION: candidate held LOW; relay and laser "
+           "must remain disconnected",
+           STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO);
+#endif
 
   if (!config.complete()) {
     stagecore::run_provisioning_portal(
