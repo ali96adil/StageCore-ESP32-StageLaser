@@ -2,6 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+FOUNDATION_SHA = "d6946da3f003e8c0c2a72216804ef2035bf1288c"
 
 class IdentityConfigContract(unittest.TestCase):
     def test_v2_config_has_no_project_authority(self):
@@ -10,11 +11,17 @@ class IdentityConfigContract(unittest.TestCase):
         self.assertNotIn("project_id", header)
         self.assertNotIn("kProjectKey", source)
 
-    def test_persistent_p256_identity_is_present(self):
-        source = (ROOT / "src" / "device_identity.cpp").read_text()
-        self.assertIn("MBEDTLS_ECP_DP_SECP256R1", source)
-        self.assertIn("stagecore_id", source)
-        self.assertIn("ec_priv_der", source)
+    def test_persistent_p256_identity_is_owned_by_pinned_foundation(self):
+        main = (ROOT / "src" / "main.cpp").read_text()
+        cmake = (ROOT / "src" / "CMakeLists.txt").read_text()
+        manifest = (ROOT / "src" / "idf_component.yml").read_text()
+
+        self.assertIn("stagecore::DeviceIdentity identity", main)
+        self.assertIn("identity.LoadOrCreate()", main)
+        self.assertIn("stagecore_foundation", cmake)
+        self.assertIn(f"version: {FOUNDATION_SHA}", manifest)
+        self.assertFalse((ROOT / "src" / "device_identity.cpp").exists())
+        self.assertFalse((ROOT / "src" / "device_identity.h").exists())
 
 if __name__ == "__main__":
     unittest.main()
