@@ -64,9 +64,10 @@ actuation binary to a show operator.
 
 ## Code/CI gates
 
-- GPIO mock must verify default zero writes, idle-before-OUTPUT, one PICK /
-  RELEASE, no repeat PICK, and rejection of unqualified activation builds.
-- Standard CI still builds only no-actuation, GPIO3 no-load, and OTA
+- No simulated GPIO pulse tests are required for this operator workflow;
+  real relay behavior is qualified on the installed GPIO3 circuit with laser
+  emission disconnected before production use.
+- Standard CI builds only no-actuation, GPIO3 no-load, and OTA
   no-actuation environments.
 - A passing CI checks firmware *source*, not laser emission or interlock
   behavior.
