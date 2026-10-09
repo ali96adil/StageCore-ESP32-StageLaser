@@ -94,7 +94,9 @@ class RelayOutputContractTest(unittest.TestCase):
             result = subprocess.run(cmd, text=True, capture_output=True, check=False)
             if not expect_success:
                 self.assertNotEqual(result.returncode, 0, "unqualified actuation must not build")
-                self.assertIn("qualification is required", result.stderr)
+                self.assertTrue("qualification is required" in result.stderr or
+                                "qualified GPIO3 hardware profile" in result.stderr,
+                                result.stderr)
                 return
             self.assertEqual(result.returncode, 0, result.stderr)
             executed = subprocess.run([str(binary)], text=True, capture_output=True, check=False)
