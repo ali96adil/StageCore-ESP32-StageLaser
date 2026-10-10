@@ -113,6 +113,17 @@ jobs:
           test -f .pio/build/esp32c3-gpio3-no-load-qualification/firmware.bin
           grep -A15 '^\[env:esp32c3-gpio3-no-load-qualification\]' platformio.ini | grep -q -- 'extends = env:esp32c3-ci-no-actuation'
           grep -A15 '^\[env:esp32c3-gpio3-no-load-qualification\]' platformio.ini | grep -q -- 'STAGECORE_GPIO_NO_LOAD_QUALIFICATION_GPIO=3'
+      - name: Build isolated relay-only manual bench image
+        run: pio run -e esp32c3-relay-only-manual-bench
+      - name: Prove relay bench is explicit and excluded from regular artifacts
+        run: |
+          set -euo pipefail
+          test -f .pio/build/esp32c3-relay-only-manual-bench/firmware.bin
+          grep -A12 '^\[env:esp32c3-relay-only-manual-bench\]' platformio.ini | grep -q 'extends = env:esp32c3-ci-no-actuation'
+          grep -A12 '^\[env:esp32c3-relay-only-manual-bench\]' platformio.ini | grep -q -- '-DSTAGECORE_RELAY_BENCH_ONLY=1'
+          grep -A12 '^\[env:esp32c3-relay-only-manual-bench\]' platformio.ini | grep -q -- '-DSTAGECORE_RELAY_BENCH_GPIO=3'
+          strings .pio/build/esp32c3-relay-only-manual-bench/firmware.bin | grep -Fq 'RELAY-ONLY BENCH MODE'
+
       - name: Build 4MB OTA candidate as no-actuation
         run: pio run -e esp32c3-ota-candidate-no-actuation
       - name: Prove OTA candidate artifact is no-actuation and maintenance-capable

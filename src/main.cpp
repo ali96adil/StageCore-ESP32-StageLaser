@@ -18,6 +18,7 @@
 #include "nvs_flash.h"
 #include "provisioning.h"
 #include "relay_output.h"
+#include "relay_bench_qualification.h"
 #include "stage_device_runtime.h"
 #include "esp_system.h"
 
@@ -107,6 +108,11 @@ stagecore::stagelaser::ResetClass classify_reset_reason(esp_reset_reason_t reaso
 }  // namespace
 
 extern "C" void app_main(void) {
+#if STAGECORE_RELAY_BENCH_ONLY == 1
+  // The only active-output firmware is an explicitly selected isolated
+  // relay-only bench image; do not enter Wi-Fi or StageCore runtime.
+  stagecore::stagelaser::run_relay_bench_qualification();
+#endif
   ESP_ERROR_CHECK(stagecore::stagelaser::gpio_no_load_qualification_init());
   const esp_err_t nvs_err = init_nvs();
   if (nvs_err != ESP_OK) {
