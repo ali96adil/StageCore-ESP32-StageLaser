@@ -1763,6 +1763,14 @@ esp_err_t run_stage_device_runtime(
             queue_superseded) {
           // Validate scope, timing and replay before returning a terminal
           // result; old queued commands must not re-arm or re-enable output.
+          // Persist the command ID before the rejection is reported: a
+          // retry with the same ID must never turn into an actuation.
+          const esp_err_t replay_err = stagelaser::command_replay_remember(
+              decision.command.command_id);
+          if (replay_err != ESP_OK) {
+            err = replay_err;  // Cleanup forces SafeOff; never execute it.
+            break;
+          }
           const std::string response = stagelaser::make_command_result(
               context.device_id, decision.command.command_id, "REJECTED",
               "DEVICE_COMMAND_SUPERSEDED", "SAFETY",
