@@ -59,6 +59,26 @@ class EmergencyOffQueueContract(unittest.TestCase):
         self.assertIn("command_state.interrupted_response", process)
         self.assertIn("send_text(client, command_state.interrupted_response)", process)
 
+    def test_late_arriving_older_command_rejected_after_validated_emergency(self):
+        command = section("std::string start_ready_command(", "std::string poll_runtime_command(")
+        self.assertIn("MarkEmergencyIssuedAt(", command)
+        self.assertLess(
+            command.index("command_replay_remember(command.command_id)"),
+            command.index("MarkEmergencyIssuedAt("),
+        )
+        process = section("std::string command_frame;", "const uint64_t now_ms =")
+        self.assertIn("IsStaleIssuedAt(", process)
+        self.assertIn("timestamp_superseded", process)
+        self.assertIn("queue_superseded || timestamp_superseded", process)
+
+    def test_emergency_failure_never_polls_old_on_transition(self):
+        command = section("std::string start_ready_command(", "std::string poll_runtime_command(")
+        self.assertIn("if (emergency_off) state->controller_faulted = true;", command)
+        self.assertIn('"DEVICE_LOCK_UNAVAILABLE"', command)
+        process = section("std::string command_frame;", "const uint64_t now_ms =")
+        self.assertIn("if (command_state.controller_faulted)", process)
+        self.assertIn("err = ESP_ERR_INVALID_STATE;", process)
+
     def test_no_implicit_gpio_actuation_or_weakened_interlocks(self):
         self.assertIn("known_safe_off(*laser)", SOURCE)
         self.assertIn("evaluate_command_execute_frame(", SOURCE)
