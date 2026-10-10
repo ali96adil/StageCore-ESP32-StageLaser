@@ -1183,8 +1183,9 @@ std::string start_ready_command(
     const std::string &device_id,
     stagelaser::LaserController *laser,
     RuntimeCommandState *state,
+    RuntimeContext *context,
     uint64_t now_ms) {
-  if (laser == nullptr || state == nullptr) return {};
+  if (laser == nullptr || state == nullptr || context == nullptr) return {};
   const bool emergency_off = command.command_type == "LASER_SAFE_OFF" ||
                              command.command_type == "LASER_DISARM";
   if (state->pending && !emergency_off) {
@@ -1221,6 +1222,21 @@ std::string start_ready_command(
           "StageLaser replay fence could not be persisted before actuation",
           false);
     }
+  }
+
+  // A fully validated emergency frame must fence commands with earlier
+  // Hub-issued timestamps even if they arrive after this OFF was dequeued.
+  // Do this only after its command ID is durably replay-fenced.
+  if (emergency_off) {
+    if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+      state->controller_faulted = true;
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "FAILED", "DEVICE_LOCK_UNAVAILABLE",
+          "SAFETY", "Emergency OFF could not establish a command fence", false);
+    }
+    context->pending_command_frames.MarkEmergencyIssuedAt(
+        command.issued_at_unix_ms);
+    xSemaphoreGive(context->lock);
   }
 
   // The emergency command has passed the durable replay fence above.
@@ -1728,8 +1744,21 @@ esp_err_t run_stage_device_runtime(
           break;
         }
 
+        bool timestamp_superseded = false;
+        if (decision.disposition == stagelaser::CommandDisposition::kReady) {
+          if (xSemaphoreTake(context.lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+            err = ESP_ERR_TIMEOUT;  // Fail closed; cleanup forces SafeOff.
+            break;
+          }
+          timestamp_superseded =
+              decision.command.command_type != "LASER_SAFE_OFF" &&
+              decision.command.command_type != "LASER_DISARM" &&
+              context.pending_command_frames.IsStaleIssuedAt(
+                  decision.command.issued_at_unix_ms);
+          xSemaphoreGive(context.lock);
+        }
         if (decision.disposition == stagelaser::CommandDisposition::kReady &&
-            queue_superseded) {
+            (queue_superseded || timestamp_superseded)) {
           // Validate scope, timing and replay before returning a terminal
           // result; old queued commands must not re-arm or re-enable output.
           // Persist the command ID before the rejection is reported: a
@@ -1749,7 +1778,7 @@ esp_err_t run_stage_device_runtime(
         } else if (decision.disposition == stagelaser::CommandDisposition::kReady) {
           const std::string response = start_ready_command(
               decision.command, context.device_id, laser, &command_state,
-              esp_timer_get_time() / 1000ULL);
+              &context, esp_timer_get_time() / 1000ULL);
           if (response.empty()) {
             err = ESP_FAIL;
             break;
