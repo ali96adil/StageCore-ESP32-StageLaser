@@ -1200,6 +1200,7 @@ std::string start_ready_command(
     esp_err_t replay_err =
         stagelaser::command_replay_seen(command.command_id, &seen);
     if (replay_err != ESP_OK) {
+      if (emergency_off) state->controller_faulted = true;
       mark_result(state, command, "FAILED", false);
       return stagelaser::make_command_result(
           device_id, command.command_id, "FAILED",
@@ -1215,6 +1216,7 @@ std::string start_ready_command(
     }
     replay_err = stagelaser::command_replay_remember(command.command_id);
     if (replay_err != ESP_OK) {
+      if (emergency_off) state->controller_faulted = true;
       mark_result(state, command, "FAILED", false);
       return stagelaser::make_command_result(
           device_id, command.command_id, "FAILED",
@@ -1317,6 +1319,7 @@ std::string start_ready_command(
   }
 
   if (has_outcome && outcome.fault != stagelaser::ControllerFault::kNone) {
+    if (emergency_off) state->controller_faulted = true;
     state->flash.active = false;
     mark_result(state, command, "FAILED", false);
     return failure_for_fault(device_id, command.command_id, outcome.fault);
@@ -1325,6 +1328,7 @@ std::string start_ready_command(
   if (has_outcome &&
       outcome.decision.result != stagelaser::ResultCode::kAccepted &&
       outcome.decision.result != stagelaser::ResultCode::kNoop) {
+    if (emergency_off) state->controller_faulted = true;
     if (command.command_type == "LASER_FLASH_START") {
       state->flash = stagelaser::FlashObservationInfo{};
     }
@@ -1799,6 +1803,12 @@ esp_err_t run_stage_device_runtime(
         last_observation_us = 0;
       }
 
+      // A failed emergency OFF must never poll the previous ON/FLASH
+      // transition again before entering the fail-closed cleanup path.
+      if (command_state.controller_faulted) {
+        err = ESP_ERR_INVALID_STATE;
+        break;
+      }
       const uint64_t now_ms =
           static_cast<uint64_t>(esp_timer_get_time() / 1000ULL);
       const std::string terminal = poll_runtime_command(
