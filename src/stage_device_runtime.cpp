@@ -55,6 +55,7 @@ constexpr EventBits_t kRuntimeReadyBit = BIT5;
 constexpr EventBits_t kCommandBit = BIT6;
 constexpr EventBits_t kMaintenanceBit = BIT7;
 constexpr EventBits_t kSetupAPMaintenanceBit = BIT8;
+constexpr EventBits_t kManualOffMaintenanceBit = BIT9;
 
 struct PrepareRequest {
   bool present = false;
@@ -112,6 +113,7 @@ struct RuntimeContext {
   EmergencyCommandQueue pending_command_frames;
   std::string pending_firmware_frame;
   std::string pending_setup_ap_frame;
+  std::string pending_manual_off_frame;
   stagelaser::CommandJournal journal;
 };
 
@@ -275,6 +277,8 @@ cJSON *capabilities_json() {
 #endif
   cJSON_AddItemToArray(
       caps, cJSON_CreateString("device.maintenance.setup-ap-password"));
+  cJSON_AddItemToArray(
+      caps, cJSON_CreateString("stagelamp.maintenance.manual-off"));
   return caps;
 }
 
@@ -574,6 +578,20 @@ bool queue_setup_ap_maintenance(RuntimeContext *context,
   return accepted;
 }
 
+bool queue_manual_off_maintenance(RuntimeContext *context,
+                                  const std::string &text) {
+  if (context == nullptr || context->lock == nullptr || text.empty() ||
+      context->assignment_state != "UNASSIGNED" || context->commands_enabled) {
+    return false;
+  }
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+  const bool free = context->pending_manual_off_frame.empty();
+  if (free) context->pending_manual_off_frame = text;
+  xSemaphoreGive(context->lock);
+  if (free) xEventGroupSetBits(context->events, kManualOffMaintenanceBit);
+  return free;
+}
+
 bool queue_firmware_update(RuntimeContext *context,
                            const std::string &text) {
 #if STAGECORE_OTA_ENABLED == 1
@@ -622,6 +640,30 @@ bool handle_complete_text(RuntimeContext *context, const std::string &text) {
          (std::strcmp(operation->valuestring, "SET") == 0 ||
           std::strcmp(operation->valuestring, "RESET_DEFAULT") == 0);
     if (ok) ok = queue_setup_ap_maintenance(context, text);
+  } else if (ok &&
+             std::strcmp(type->valuestring,
+                         "stagelamp.maintenance.manual_off") == 0) {
+    int64_t generation = 0;
+    std::string observed_boot_id;
+    std::string request_id;
+    const cJSON *visual_on =
+        cJSON_GetObjectItemCaseSensitive(root, "physically_observed_on");
+    const cJSON *confirm =
+        cJSON_GetObjectItemCaseSensitive(root, "confirm");
+    ok = context->assignment_received &&
+         context->assignment_state == "UNASSIGNED" &&
+         !context->commands_enabled &&
+         exact_positive_integer(root, "connection_generation", &generation) &&
+         generation == context->connection_generation &&
+         nonempty_string(root, "request_id", &request_id) &&
+         uuid_length(request_id) &&
+         nonempty_string(root, "observed_boot_id", &observed_boot_id) &&
+         observed_boot_id == boot_id() &&
+         cJSON_IsTrue(visual_on) &&
+         cJSON_IsString(confirm) && confirm->valuestring != nullptr &&
+         std::strcmp(confirm->valuestring,
+            "PULSE_ONCE_TO_TURN_OFF_OBSERVED_ON_LAMP") == 0;
+    if (ok) ok = queue_manual_off_maintenance(context, text);
   } else if (ok && std::strcmp(type->valuestring, "assignment.state") == 0) {
     ok = parse_assignment_state(context, root);
   } else if (ok &&
@@ -828,6 +870,23 @@ bool take_setup_ap_maintenance(RuntimeContext *context,
   }
   xSemaphoreGive(context->lock);
   if (present) xEventGroupClearBits(context->events, kSetupAPMaintenanceBit);
+  return present;
+}
+
+bool take_manual_off_maintenance(RuntimeContext *context,
+                                 std::string *frame) {
+  if (context == nullptr || frame == nullptr || context->lock == nullptr)
+    return false;
+  if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE)
+    return false;
+  const bool present = !context->pending_manual_off_frame.empty();
+  if (present) {
+    *frame = std::move(context->pending_manual_off_frame);
+    context->pending_manual_off_frame.clear();
+  }
+  xSemaphoreGive(context->lock);
+  if (present)
+    xEventGroupClearBits(context->events, kManualOffMaintenanceBit);
   return present;
 }
 
@@ -1514,6 +1573,104 @@ std::string poll_runtime_command(
 
 }  // namespace
 
+std::string make_manual_off_result(
+    const RuntimeContext &context, const std::string &request_id,
+    const char *state, const char *detail) {
+  cJSON *root = cJSON_CreateObject();
+  if (root == nullptr) return {};
+  cJSON_AddStringToObject(root, "type",
+                          "stagelamp.maintenance.manual_off.result");
+  cJSON_AddNumberToObject(root, "schema_version", 2);
+  cJSON_AddStringToObject(root, "device_id", context.device_id.c_str());
+  cJSON_AddNumberToObject(root, "connection_generation",
+                          static_cast<double>(context.connection_generation));
+  cJSON_AddStringToObject(root, "request_id", request_id.c_str());
+  cJSON_AddStringToObject(root, "boot_id", boot_id().c_str());
+  cJSON_AddStringToObject(root, "maintenance_state", state);
+  cJSON_AddStringToObject(root, "detail", detail);
+  const std::string out = print_json(root);
+  cJSON_Delete(root);
+  return out;
+}
+
+// Dedicated physical-lamp maintenance. No Project/Runtime Snapshot or Cue
+// authority. A freshly observed ON allows one toggle-to-OFF, not a blind
+// toggle from UNKNOWN. Persist replay ID BEFORE GPIO pick, so network retry
+// after an ambiguous result can never toggle the lamp back ON.
+std::string process_manual_off_maintenance(
+    RuntimeContext *context, stagelaser::LaserController *laser,
+    const RuntimeCommandState &command_state, const std::string &frame) {
+  if (context == nullptr || laser == nullptr) return {};
+  cJSON *root = cJSON_ParseWithLength(frame.data(), frame.size());
+  if (root == nullptr) return {};
+  std::string request_id;
+  std::string observed_boot_id;
+  int64_t generation = 0;
+  const cJSON *visual_on =
+      cJSON_GetObjectItemCaseSensitive(root, "physically_observed_on");
+  const cJSON *confirm = cJSON_GetObjectItemCaseSensitive(root, "confirm");
+  const bool valid =
+      nonempty_string(root, "request_id", &request_id) &&
+      uuid_length(request_id) &&
+      nonempty_string(root, "observed_boot_id", &observed_boot_id) &&
+      exact_positive_integer(root, "connection_generation", &generation) &&
+      generation == context->connection_generation &&
+      observed_boot_id == boot_id() &&
+      cJSON_IsTrue(visual_on) &&
+      cJSON_IsString(confirm) && confirm->valuestring != nullptr &&
+      std::strcmp(confirm->valuestring,
+          "PULSE_ONCE_TO_TURN_OFF_OBSERVED_ON_LAMP") == 0;
+  cJSON_Delete(root);
+  if (!valid) return {};
+  auto result = [&](const char *state, const char *detail) {
+    return make_manual_off_result(*context, request_id, state, detail);
+  };
+  if (context->assignment_state != "UNASSIGNED" ||
+      context->commands_enabled || command_state.pending ||
+      laser->machine().arm_state() != stagelaser::ArmState::kDisarmed ||
+      laser->machine().pulse_in_progress() ||
+      laser->machine().flash_active() ||
+      laser->machine().safe_off_pending()) {
+    return result("REJECTED", "Device must be unassigned, disarmed and idle");
+  }
+  bool seen = false;
+  if (stagelaser::command_replay_seen(request_id, &seen) != ESP_OK)
+    return result("FAILED", "Durable replay fence unavailable; no pulse");
+  if (seen)
+    return result("REJECTED", "Command already consumed; visually inspect");
+  if (stagelaser::command_replay_remember(request_id) != ESP_OK)
+    return result("FAILED", "Cannot persist command ID; no pulse");
+
+  // The operator just saw the physical lamp ON. Align SOFTWARE truth to
+  // the attended observation without pulsing, then execute one OFF pulse.
+  const auto synced = laser->ResyncOn();
+  if (synced.fault != stagelaser::ControllerFault::kNone ||
+      synced.decision.result != stagelaser::ResultCode::kAccepted)
+    return result("FAILED", "Cannot persist observed ON; no pulse");
+
+  const uint64_t before = laser->machine().relay_pulse_count();
+  const auto off = laser->SetOff(
+      static_cast<uint64_t>(esp_timer_get_time() / 1000ULL));
+  if (off.fault != stagelaser::ControllerFault::kNone ||
+      off.decision.result != stagelaser::ResultCode::kAccepted)
+    return result("FAILED", "OFF pulse not accepted; inspect lamp");
+
+  const int64_t deadline = esp_timer_get_time() + 5000000LL;
+  while (esp_timer_get_time() < deadline) {
+    const auto tick = laser->Poll(
+        static_cast<uint64_t>(esp_timer_get_time() / 1000ULL));
+    if (tick.fault != stagelaser::ControllerFault::kNone)
+      return result("FAILED", "Relay pulse fault; inspect lamp");
+    if (known_safe_off(*laser) &&
+        laser->machine().relay_pulse_count() == before + 1) {
+      return result("APPLIED",
+          "One momentary OFF pulse completed; visually verify the lamp");
+    }
+    vTaskDelay(pdMS_TO_TICKS(5) > 0 ? pdMS_TO_TICKS(5) : 1);
+  }
+  return result("FAILED", "OFF pulse result uncertain; inspect before retry");
+}
+
 esp_err_t run_stage_device_runtime(
     const VerifiedHub &hub,
     const RuntimeCredential &credential,
@@ -1671,6 +1828,17 @@ esp_err_t run_stage_device_runtime(
       if (bits & kDisconnectedBit) {
         err = ESP_ERR_INVALID_STATE;
         break;
+      }
+
+      std::string manual_off_frame;
+      if ((bits & kManualOffMaintenanceBit) &&
+          take_manual_off_maintenance(&context, &manual_off_frame)) {
+        const std::string reply = process_manual_off_maintenance(
+            &context, laser, command_state, manual_off_frame);
+        if (reply.empty()) { err = ESP_ERR_INVALID_RESPONSE; break; }
+        err = send_text(client, reply);
+        if (err != ESP_OK) break;
+        last_observation_us = 0;
       }
 
       std::string setup_ap_frame;
