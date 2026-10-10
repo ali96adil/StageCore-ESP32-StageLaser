@@ -1214,6 +1214,21 @@ std::string start_ready_command(
           "DEVICE_COMMAND_DUPLICATE", "IDEMPOTENCY",
           "This actuation command_id was already accepted before", false);
     }
+    // Store the OFF timestamp before the command ID: a reset between
+    // writes leaves a conservative barrier, not a replayable stale ON.
+    if (emergency_off) {
+      replay_err = stagelaser::command_emergency_watermark_remember(
+          command.issued_at_unix_ms);
+      if (replay_err != ESP_OK) {
+        state->controller_faulted = true;
+        mark_result(state, command, "FAILED", false);
+        return stagelaser::make_command_result(
+            device_id, command.command_id, "FAILED",
+            "DEVICE_PERSISTENCE_FAILED", "PERSISTENCE",
+            "StageLaser emergency timestamp fence could not be persisted",
+            false);
+      }
+    }
     replay_err = stagelaser::command_replay_remember(command.command_id);
     if (replay_err != ESP_OK) {
       if (emergency_off) state->controller_faulted = true;
@@ -1228,7 +1243,7 @@ std::string start_ready_command(
 
   // A fully validated emergency frame must fence commands with earlier
   // Hub-issued timestamps even if they arrive after this OFF was dequeued.
-  // Do this only after its command ID is durably replay-fenced.
+  // Do this only after both NVS barriers are durably committed.
   if (emergency_off) {
     if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
       state->controller_faulted = true;
@@ -1474,8 +1489,18 @@ esp_err_t run_stage_device_runtime(
     return ESP_ERR_INVALID_ARG;
   }
 
+  // Fail closed before connecting if the prior emergency barrier cannot
+  // be read. Never treat corrupt NVS as a fresh unprotected session.
+  int64_t durable_emergency_issued_at = 0;
+  const esp_err_t watermark_err =
+      stagelaser::command_emergency_watermark_load(
+          &durable_emergency_issued_at);
+  if (watermark_err != ESP_OK) return watermark_err;
+
   RuntimeContext context;
   RuntimeCommandState command_state;
+  context.pending_command_frames.MarkEmergencyIssuedAt(
+      durable_emergency_issued_at);
   context.events = xEventGroupCreate();
   context.lock = xSemaphoreCreateMutex();
   context.device_id = identity.device_id();
