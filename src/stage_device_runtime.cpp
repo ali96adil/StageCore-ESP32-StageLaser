@@ -490,6 +490,23 @@ bool parse_runtime_ready(RuntimeContext *context, const cJSON *root) {
 // deadline, assignment scope and replay fence are validated before actuation.
 // A forged/malformed emergency hint can suppress queued work (fail closed),
 // but must never directly actuate the relay.
+// This is only a priority hint. Reject ambiguous JSON keys here so a
+// malformed "SAFE_OFF" frame cannot supersede ordinary queued commands
+// before the strict command envelope validator has run.
+bool unique_emergency_hint_keys(const cJSON *object) {
+  if (!cJSON_IsObject(object)) return false;
+  for (const cJSON *field = object->child; field != nullptr;
+       field = field->next) {
+    if (field->string == nullptr) return false;
+    for (const cJSON *next = field->next; next != nullptr;
+         next = next->next) {
+      if (next->string == nullptr ||
+          std::strcmp(field->string, next->string) == 0) return false;
+    }
+  }
+  return true;
+}
+
 bool is_emergency_off_frame(const std::string &text) {
   cJSON *root = cJSON_Parse(text.c_str());
   if (root == nullptr) return false;
@@ -497,6 +514,8 @@ bool is_emergency_off_frame(const std::string &text) {
   const cJSON *command = cJSON_GetObjectItemCaseSensitive(root, "command");
   const cJSON *kind = cJSON_GetObjectItemCaseSensitive(command, "command_type");
   const bool emergency =
+      unique_emergency_hint_keys(root) &&
+      unique_emergency_hint_keys(command) &&
       cJSON_IsString(type) && type->valuestring != nullptr &&
       std::strcmp(type->valuestring, "command.execute") == 0 &&
       cJSON_IsObject(command) && cJSON_IsString(kind) &&
