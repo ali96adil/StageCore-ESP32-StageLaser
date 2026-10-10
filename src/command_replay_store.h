@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "esp_err.h"
@@ -16,5 +17,21 @@ esp_err_t command_replay_seen(const std::string &command_id, bool *seen);
 // Atomically remembers command_id before any command is allowed to actuate.
 // Re-remembering an existing ID is a no-op.
 esp_err_t command_replay_remember(const std::string &command_id);
+
+// Persistent monotonic output-control generation. No command that could
+// enable the laser may actuate with generation <= this value. This watermark
+// survives ESP32 restart; corruption or NVS failure must fail closed.
+// Hub allocates the generation durably for the entire device identity.
+esp_err_t command_control_generation_load(uint64_t *generation);
+esp_err_t command_control_generation_remember(uint64_t generation);
+
+// Conservative, reboot-persistent timestamp barrier for emergency OFF.
+// Returns 0 when no barrier has been stored. Corrupt/unavailable NVS is an
+// error, never interpreted as an empty barrier.
+esp_err_t command_emergency_watermark_load(int64_t *issued_at_unix_ms);
+
+// Persist the maximum validated emergency OFF issued-at before processing
+// that command. A lower timestamp never rewinds the durable barrier.
+esp_err_t command_emergency_watermark_remember(int64_t issued_at_unix_ms);
 
 }  // namespace stagecore::stagelaser

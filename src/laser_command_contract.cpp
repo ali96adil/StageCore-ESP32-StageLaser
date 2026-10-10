@@ -2,10 +2,12 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 #include "cJSON.h"
 #include "laser_contract.h"
+#include "laser_timing_fence.h"
 #include "trusted_clock.h"
 
 namespace stagecore::stagelaser {
@@ -39,10 +41,27 @@ bool string_field(const cJSON *object, const char *key,
 bool number_field(const cJSON *object, const char *key, int *value) {
   const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
   if (!cJSON_IsNumber(item) || !std::isfinite(item->valuedouble) ||
-      item->valuedouble != std::floor(item->valuedouble)) {
+      item->valuedouble != std::floor(item->valuedouble) ||
+      item->valuedouble < static_cast<double>(std::numeric_limits<int>::min()) ||
+      item->valuedouble > static_cast<double>(std::numeric_limits<int>::max())) {
     return false;
   }
   *value = static_cast<int>(item->valuedouble);
+  return true;
+}
+
+bool positive_control_generation(const cJSON *object, uint64_t *value) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(
+      object, "control_generation");
+  // JSON/cJSON numbers are doubles: stay in the exact integer range to
+  // prevent generation aliasing or truncation at the ESP32 boundary.
+  constexpr double kMaxExactGeneration = 9007199254740991.0;
+  if (!cJSON_IsNumber(item) || !std::isfinite(item->valuedouble) ||
+      item->valuedouble < 1.0 ||
+      item->valuedouble > kMaxExactGeneration ||
+      item->valuedouble != std::floor(item->valuedouble) ||
+      value == nullptr) return false;
+  *value = static_cast<uint64_t>(item->valuedouble);
   return true;
 }
 
@@ -58,7 +77,7 @@ bool allowed_command_key(const char *key) {
       "command_id", "command_type", "schema_version", "issued_at",
       "deadline_at", "project_id", "runtime_snapshot_id", "issuer",
       "correlation_id", "causation_id", "priority", "idempotency_key",
-      "payload",
+      "control_generation", "payload",
   };
   for (const char *candidate : kAllowed) {
     if (std::strcmp(key, candidate) == 0) return true;
@@ -72,6 +91,12 @@ bool no_unknown_fields(const cJSON *object,
   const cJSON *child = nullptr;
   cJSON_ArrayForEach(child, object) {
     if (child->string == nullptr || !allowed(child->string)) return false;
+    // JSON object keys must be unique. Otherwise different parsers can
+    // disagree about the command ID, scope, timestamp or payload.
+    for (const cJSON *next = child->next; next != nullptr; next = next->next) {
+      if (next->string == nullptr ||
+          std::strcmp(child->string, next->string) == 0) return false;
+    }
   }
   return true;
 }
@@ -113,6 +138,20 @@ bool payload_has_only(const cJSON *payload,
 
 bool empty_payload(const cJSON *payload) {
   return cJSON_IsObject(payload) && cJSON_GetArraySize(payload) == 0;
+}
+
+// Output-enabling commands cannot remain valid indefinitely after a delayed
+// WebSocket frame or a Hub/device reconnection. STOP/SAFE_OFF and OFF commands
+// are deliberately exempt so a clock outage does not prevent safe actions.
+bool requires_fresh_deadline(const std::string &command_type,
+                             const cJSON *payload) {
+  bool resync_to_on = false;
+  if (command_type == "LASER_STATE_RESYNC") {
+    const cJSON *state = cJSON_GetObjectItemCaseSensitive(payload, "state");
+    resync_to_on = cJSON_IsString(state) && state->valuestring != nullptr &&
+                   std::strcmp(state->valuestring, "ON") == 0;
+  }
+  return RequiresFreshDeadline(command_type, resync_to_on);
 }
 
 bool valid_payload(const std::string &command_type,
@@ -320,6 +359,7 @@ esp_err_t evaluate_command_execute_frame(
       string_field(command, "project_id", &parsed.project_id, true, kMaxID) &&
       string_field(command, "runtime_snapshot_id",
                    &parsed.runtime_snapshot_id, true, kMaxID) &&
+      positive_control_generation(command, &parsed.control_generation) &&
       string_field(command, "issuer", &parsed.issuer, true, kMaxIssuer) &&
       string_field(command, "correlation_id",
                    &parsed.correlation_id, false, kMaxID) &&
@@ -415,6 +455,21 @@ esp_err_t evaluate_command_execute_frame(
     return ESP_OK;
   }
 
+  const bool enabling_command =
+      requires_fresh_deadline(parsed.command_type, payload);
+  if (enabling_command && !parsed.has_deadline) {
+    decision->command = parsed;
+    decision->disposition = CommandDisposition::kRejected;
+    decision->response_json =
+        reject(expected_device_id, parsed.command_id,
+               "DEVICE_COMMAND_DEADLINE_REQUIRED", "TIMING",
+               "Output-enabling StageLaser commands require a Hub deadline",
+               false);
+    journal->Remember(parsed.command_id, decision->response_json);
+    cJSON_Delete(root);
+    return ESP_OK;
+  }
+
   if (parsed.has_deadline) {
     if (!trusted_clock_ready()) {
       decision->command = parsed;
@@ -429,6 +484,23 @@ esp_err_t evaluate_command_execute_frame(
     }
 
     const int64_t now_ms = trusted_now_unix_ms();
+    // A far-future issued_at can bypass the persistent emergency OFF
+    // timestamp watermark even though the deadline is still in the future.
+    // Reject such future-dated enabling frames. Deliberate OFF commands
+    // remain available during an inconsistent timestamp situation.
+    if (enabling_command &&
+        IssuedTooFarInFuture(parsed.issued_at_unix_ms, now_ms)) {
+      decision->command = parsed;
+      decision->disposition = CommandDisposition::kRejected;
+      decision->response_json =
+          reject(expected_device_id, parsed.command_id,
+                 "DEVICE_COMMAND_ISSUED_IN_FUTURE", "TIMING",
+                 "Output-enabling command issued_at exceeds clock tolerance",
+                 false);
+      journal->Remember(parsed.command_id, decision->response_json);
+      cJSON_Delete(root);
+      return ESP_OK;
+    }
     if (now_ms <= 0 || now_ms > parsed.deadline_at_unix_ms) {
       decision->command = parsed;
       decision->disposition = CommandDisposition::kTimedOut;

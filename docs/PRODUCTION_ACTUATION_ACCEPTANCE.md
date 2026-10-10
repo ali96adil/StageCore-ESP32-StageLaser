@@ -16,6 +16,19 @@ The ESP32-C3 drives the qualified NPN transistor interface, **not** the
 - The physical laser can remain ON when the ESP32 alone loses power if its
   independent power domain remains energized. Software cannot prevent that.
 
+## Operator-confirmed installed controls (2026-10-10)
+
+- **Main power isolator:** disconnects the supply to **both ESP32 and laser**.
+- **Laser control:** a **momentary toggle pushbutton**; each press changes
+  the laser's state, rather than holding power OFF while the control is open.
+- **Consequences:** the main isolator is an effective deliberate all-power
+  shutdown when opened, but it does not automatically detect an ESP32-only
+  crash or loss of ESP32 power. The momentary toggle contact cannot guarantee
+  beam OFF by merely releasing GPIO3. Neither control, as described, proves
+  an independent automatic beam inhibit on controller failure.
+- The GPIO3 active-HIGH NPN pulse driver remains implemented but **not
+  authorized for show actuation** by this wiring confirmation alone.
+
 ## Non-negotiable hardware proof before a show-use actuation build
 
 1. Verify the **specific installed** driver hardware (NPN polarity, base bias,

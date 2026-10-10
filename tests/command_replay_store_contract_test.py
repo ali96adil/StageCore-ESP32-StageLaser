@@ -13,6 +13,18 @@ class PersistentCommandReplayContract(unittest.TestCase):
         self.assertIn("nvs_commit", source)
         self.assertIn("seen_v1", source)
 
+    def test_emergency_timestamp_is_durable_monotonic_and_fail_closed(self):
+        header = (ROOT / "src" / "command_replay_store.h").read_text()
+        source = (ROOT / "src" / "command_replay_store.cpp").read_text()
+        self.assertIn("command_emergency_watermark_load(", header)
+        self.assertIn("command_emergency_watermark_remember(", header)
+        self.assertIn('kEmergencyWatermarkKey[] = "off_ts_v1"', source)
+        self.assertIn("nvs_get_i64(handle, kEmergencyWatermarkKey", source)
+        self.assertIn("nvs_set_i64(handle, kEmergencyWatermarkKey", source)
+        self.assertIn("if (issued_at_unix_ms <= previous) return ESP_OK;", source)
+        self.assertIn("if (value <= 0) return ESP_ERR_INVALID_STATE;", source)
+        self.assertIn("if (err == ESP_OK) err = nvs_commit(handle);", source)
+
     def test_storage_failure_is_not_treated_as_a_cache_miss(self):
         source = (ROOT / "src" / "command_replay_store.cpp").read_text()
         self.assertIn("return valid_blob(*blob) ? ESP_OK : ESP_ERR_INVALID_STATE", source)

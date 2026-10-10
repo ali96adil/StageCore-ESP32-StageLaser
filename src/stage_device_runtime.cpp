@@ -22,6 +22,8 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "command_replay_store.h"
+#include "control_generation_fence.h"
+#include "emergency_command_queue.h"
 #include "config_store.h"
 #include "firmware_update.h"
 #include "laser_command_contract.h"
@@ -74,6 +76,8 @@ enum class PendingGoal {
 
 struct RuntimeCommandState {
   bool pending = false;
+  std::string interrupted_command_id;
+  std::string interrupted_response;
   bool controller_faulted = false;
   PendingGoal goal = PendingGoal::kNone;
   std::string command_id;
@@ -103,7 +107,7 @@ struct RuntimeContext {
   PrepareRequest pending_prepare;
   bool commands_enabled = false;
   bool runtime_ready_received = false;
-  std::vector<std::string> pending_command_frames;
+  EmergencyCommandQueue pending_command_frames;
   std::string pending_firmware_frame;
   std::string pending_setup_ap_frame;
   stagelaser::CommandJournal journal;
@@ -483,19 +487,56 @@ bool parse_runtime_ready(RuntimeContext *context, const cJSON *root) {
   return true;
 }
 
+// This is only a queue-order hint. The full authenticated command envelope,
+// deadline, assignment scope and replay fence are validated before actuation.
+// A forged/malformed emergency hint can suppress queued work (fail closed),
+// but must never directly actuate the relay.
+// This is only a priority hint. Reject ambiguous JSON keys here so a
+// malformed "SAFE_OFF" frame cannot supersede ordinary queued commands
+// before the strict command envelope validator has run.
+bool unique_emergency_hint_keys(const cJSON *object) {
+  if (!cJSON_IsObject(object)) return false;
+  for (const cJSON *field = object->child; field != nullptr;
+       field = field->next) {
+    if (field->string == nullptr) return false;
+    for (const cJSON *next = field->next; next != nullptr;
+         next = next->next) {
+      if (next->string == nullptr ||
+          std::strcmp(field->string, next->string) == 0) return false;
+    }
+  }
+  return true;
+}
+
+bool is_emergency_off_frame(const std::string &text) {
+  cJSON *root = cJSON_Parse(text.c_str());
+  if (root == nullptr) return false;
+  const cJSON *type = cJSON_GetObjectItemCaseSensitive(root, "type");
+  const cJSON *command = cJSON_GetObjectItemCaseSensitive(root, "command");
+  const cJSON *kind = cJSON_GetObjectItemCaseSensitive(command, "command_type");
+  const bool emergency =
+      unique_emergency_hint_keys(root) &&
+      unique_emergency_hint_keys(command) &&
+      cJSON_IsString(type) && type->valuestring != nullptr &&
+      std::strcmp(type->valuestring, "command.execute") == 0 &&
+      cJSON_IsObject(command) && cJSON_IsString(kind) &&
+      kind->valuestring != nullptr &&
+      (std::strcmp(kind->valuestring, "LASER_SAFE_OFF") == 0 ||
+       std::strcmp(kind->valuestring, "LASER_DISARM") == 0);
+  cJSON_Delete(root);
+  return emergency;
+}
+
 bool queue_command(RuntimeContext *context, const std::string &text) {
   if (context == nullptr || !context->commands_enabled ||
       context->lock == nullptr || text.empty()) {
     return false;
   }
+  const bool emergency = is_emergency_off_frame(text);
   if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
     return false;
   }
-  bool accepted = false;
-  if (context->pending_command_frames.size() < 8) {
-    context->pending_command_frames.push_back(text);
-    accepted = true;
-  }
+  const bool accepted = context->pending_command_frames.Push(text, emergency);
   xSemaphoreGive(context->lock);
   if (accepted) xEventGroupSetBits(context->events, kCommandBit);
   return accepted;
@@ -739,18 +780,16 @@ bool take_prepare(RuntimeContext *context, PrepareRequest *request) {
   return present;
 }
 
-bool take_command(RuntimeContext *context, std::string *frame) {
-  if (context == nullptr || frame == nullptr || context->lock == nullptr) {
+bool take_command(RuntimeContext *context, std::string *frame,
+                  bool *superseded) {
+  if (context == nullptr || frame == nullptr || superseded == nullptr ||
+      context->lock == nullptr) {
     return false;
   }
   if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
     return false;
   }
-  const bool present = !context->pending_command_frames.empty();
-  if (present) {
-    *frame = std::move(context->pending_command_frames.front());
-    context->pending_command_frames.erase(context->pending_command_frames.begin());
-  }
+  const bool present = context->pending_command_frames.Pop(frame, superseded);
   const bool more = !context->pending_command_frames.empty();
   xSemaphoreGive(context->lock);
   if (!more) xEventGroupClearBits(context->events, kCommandBit);
@@ -1164,9 +1203,12 @@ std::string start_ready_command(
     const std::string &device_id,
     stagelaser::LaserController *laser,
     RuntimeCommandState *state,
+    RuntimeContext *context,
     uint64_t now_ms) {
-  if (laser == nullptr || state == nullptr) return {};
-  if (state->pending) {
+  if (laser == nullptr || state == nullptr || context == nullptr) return {};
+  const bool emergency_off = command.command_type == "LASER_SAFE_OFF" ||
+                             command.command_type == "LASER_DISARM";
+  if (state->pending && !emergency_off) {
     mark_result(state, command, "REJECTED", false);
     return stagelaser::make_command_result(
         device_id, command.command_id, "REJECTED", "LASER_BUSY", "RUNTIME",
@@ -1178,6 +1220,7 @@ std::string start_ready_command(
     esp_err_t replay_err =
         stagelaser::command_replay_seen(command.command_id, &seen);
     if (replay_err != ESP_OK) {
+      if (emergency_off) state->controller_faulted = true;
       mark_result(state, command, "FAILED", false);
       return stagelaser::make_command_result(
           device_id, command.command_id, "FAILED",
@@ -1191,8 +1234,24 @@ std::string start_ready_command(
           "DEVICE_COMMAND_DUPLICATE", "IDEMPOTENCY",
           "This actuation command_id was already accepted before", false);
     }
+    // Store the OFF timestamp before the command ID: a reset between
+    // writes leaves a conservative barrier, not a replayable stale ON.
+    if (emergency_off) {
+      replay_err = stagelaser::command_emergency_watermark_remember(
+          command.issued_at_unix_ms);
+      if (replay_err != ESP_OK) {
+        state->controller_faulted = true;
+        mark_result(state, command, "FAILED", false);
+        return stagelaser::make_command_result(
+            device_id, command.command_id, "FAILED",
+            "DEVICE_PERSISTENCE_FAILED", "PERSISTENCE",
+            "StageLaser emergency timestamp fence could not be persisted",
+            false);
+      }
+    }
     replay_err = stagelaser::command_replay_remember(command.command_id);
     if (replay_err != ESP_OK) {
+      if (emergency_off) state->controller_faulted = true;
       mark_result(state, command, "FAILED", false);
       return stagelaser::make_command_result(
           device_id, command.command_id, "FAILED",
@@ -1200,6 +1259,38 @@ std::string start_ready_command(
           "StageLaser replay fence could not be persisted before actuation",
           false);
     }
+  }
+
+  // A fully validated emergency frame must fence commands with earlier
+  // Hub-issued timestamps even if they arrive after this OFF was dequeued.
+  // Do this only after both NVS barriers are durably committed.
+  if (emergency_off) {
+    if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+      state->controller_faulted = true;
+      return stagelaser::make_command_result(
+          device_id, command.command_id, "FAILED", "DEVICE_LOCK_UNAVAILABLE",
+          "SAFETY", "Emergency OFF could not establish a command fence", false);
+    }
+    context->pending_command_frames.MarkEmergencyIssuedAt(
+        command.issued_at_unix_ms);
+    xSemaphoreGive(context->lock);
+  }
+
+  // The emergency command has passed the durable replay fence above.
+  // Supersede an in-progress ON/FLASH transition rather than rejecting OFF
+  // as LASER_BUSY. The old terminal result is emitted by the runtime loop.
+  if (state->pending && emergency_off) {
+    const std::string old_id = state->command_id;
+    state->interrupted_command_id = old_id;
+    state->interrupted_response = stagelaser::make_command_result(
+        device_id, old_id, "CANCELLED", "DEVICE_COMMAND_SUPERSEDED",
+        "SAFETY", "StageLaser emergency OFF superseded the prior command",
+        false);
+    state->pending = false;
+    state->goal = PendingGoal::kNone;
+    state->command_id.clear();
+    state->command_type.clear();
+    state->flash = stagelaser::FlashObservationInfo{};
   }
 
   stagelaser::ControllerOutcome outcome{};
@@ -1263,6 +1354,7 @@ std::string start_ready_command(
   }
 
   if (has_outcome && outcome.fault != stagelaser::ControllerFault::kNone) {
+    if (emergency_off) state->controller_faulted = true;
     state->flash.active = false;
     mark_result(state, command, "FAILED", false);
     return failure_for_fault(device_id, command.command_id, outcome.fault);
@@ -1271,6 +1363,7 @@ std::string start_ready_command(
   if (has_outcome &&
       outcome.decision.result != stagelaser::ResultCode::kAccepted &&
       outcome.decision.result != stagelaser::ResultCode::kNoop) {
+    if (emergency_off) state->controller_faulted = true;
     if (command.command_type == "LASER_FLASH_START") {
       state->flash = stagelaser::FlashObservationInfo{};
     }
@@ -1416,8 +1509,43 @@ esp_err_t run_stage_device_runtime(
     return ESP_ERR_INVALID_ARG;
   }
 
+  // Fail closed before connecting if the prior emergency barrier cannot
+  // be read. Never treat corrupt NVS as a fresh unprotected session.
+  int64_t durable_emergency_issued_at = 0;
+  const esp_err_t watermark_err =
+      stagelaser::command_emergency_watermark_load(
+          &durable_emergency_issued_at);
+  if (watermark_err != ESP_OK) {
+    // Corrupt NVS blocks connection. Attempt SafeOff as well, but never
+    // claim physical OFF merely because the attempt was made.
+    const esp_err_t safe_err = drive_safe_off(laser);
+    if (safe_err != ESP_OK) {
+      ESP_LOGE(kTag, "Emergency barrier unreadable and SafeOff unproven: %s",
+               esp_err_to_name(safe_err));
+    }
+    return watermark_err;
+  }
+
+  // A previously accepted command generation must outlive reconnects,
+  // crashes, and controller reboots. If persistent state is unreadable,
+  // refuse ALL command authority; do not silently reset to generation zero.
+  uint64_t durable_control_generation = 0;
+  const esp_err_t generation_err =
+      stagelaser::command_control_generation_load(
+          &durable_control_generation);
+  if (generation_err != ESP_OK) {
+    const esp_err_t safe_err = drive_safe_off(laser);
+    if (safe_err != ESP_OK) {
+      ESP_LOGE(kTag, "Control generation unreadable and SafeOff unproven: %s",
+               esp_err_to_name(safe_err));
+    }
+    return generation_err;
+  }
+
   RuntimeContext context;
   RuntimeCommandState command_state;
+  context.pending_command_frames.MarkEmergencyIssuedAt(
+      durable_emergency_issued_at);
   context.events = xEventGroupCreate();
   context.lock = xSemaphoreCreateMutex();
   context.device_id = identity.device_id();
@@ -1677,7 +1805,9 @@ esp_err_t run_stage_device_runtime(
       }
 
       std::string command_frame;
-      if ((bits & kCommandBit) && take_command(&context, &command_frame)) {
+      bool queue_superseded = false;
+      if ((bits & kCommandBit) &&
+          take_command(&context, &command_frame, &queue_superseded)) {
         stagelaser::CommandDecision decision;
         const esp_err_t command_err =
             stagelaser::evaluate_command_execute_frame(
@@ -1688,16 +1818,84 @@ esp_err_t run_stage_device_runtime(
           break;
         }
 
+        bool timestamp_superseded = false;
         if (decision.disposition == stagelaser::CommandDisposition::kReady) {
+          if (xSemaphoreTake(context.lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+            err = ESP_ERR_TIMEOUT;  // Fail closed; cleanup forces SafeOff.
+            break;
+          }
+          timestamp_superseded =
+              decision.command.command_type != "LASER_SAFE_OFF" &&
+              decision.command.command_type != "LASER_DISARM" &&
+              context.pending_command_frames.IsStaleIssuedAt(
+                  decision.command.issued_at_unix_ms);
+          xSemaphoreGive(context.lock);
+        }
+        // Fence all distinct-ID late commands on the same authenticated
+        // device identity. Never let stale ON/ARM/FLASH/READ gain authority
+        // after STOP/SafeOff, including after reboot. Older emergency OFF
+        // remains allowed because it only requests a safer logical state;
+        // it must never rewind the persisted generation.
+        bool generation_superseded = false;
+        if (decision.disposition == stagelaser::CommandDisposition::kReady &&
+            !queue_superseded && !timestamp_superseded) {
+          const bool emergency_off =
+              decision.command.command_type == "LASER_SAFE_OFF" ||
+              decision.command.command_type == "LASER_DISARM";
+          const uint64_t candidate = decision.command.control_generation;
+          const auto generation_decision =
+              stagelaser::DecideControlGeneration(
+                  candidate, durable_control_generation, emergency_off);
+          if (generation_decision ==
+              stagelaser::ControlGenerationDecision::kReject) {
+            generation_superseded = true;
+          } else if (generation_decision ==
+                     stagelaser::ControlGenerationDecision::kAdvance) {
+            const esp_err_t generation_write =
+                stagelaser::command_control_generation_remember(candidate);
+            if (generation_write != ESP_OK) {
+              err = generation_write;  // Fail closed before any actuation.
+              break;
+            }
+            durable_control_generation = candidate;
+          }
+        }
+        if (decision.disposition == stagelaser::CommandDisposition::kReady &&
+            (queue_superseded || timestamp_superseded ||
+             generation_superseded)) {
+          // Validate scope, timing and replay before returning a terminal
+          // result; old queued commands must not re-arm or re-enable output.
+          // Persist the command ID before the rejection is reported: a
+          // retry with the same ID must never turn into an actuation.
+          const esp_err_t replay_err = stagelaser::command_replay_remember(
+              decision.command.command_id);
+          if (replay_err != ESP_OK) {
+            err = replay_err;  // Cleanup forces SafeOff; never execute it.
+            break;
+          }
+          const std::string response = stagelaser::make_command_result(
+              context.device_id, decision.command.command_id, "REJECTED",
+              "DEVICE_COMMAND_SUPERSEDED", "SAFETY",
+              "An emergency OFF superseded this queued command", false);
+          context.journal.Remember(decision.command.command_id, response);
+          err = send_text(client, response);
+        } else if (decision.disposition == stagelaser::CommandDisposition::kReady) {
           const std::string response = start_ready_command(
               decision.command, context.device_id, laser, &command_state,
-              esp_timer_get_time() / 1000ULL);
+              &context, esp_timer_get_time() / 1000ULL);
           if (response.empty()) {
             err = ESP_FAIL;
             break;
           }
           context.journal.Remember(decision.command.command_id, response);
           err = send_text(client, response);
+          if (err == ESP_OK && !command_state.interrupted_response.empty()) {
+            context.journal.Remember(command_state.interrupted_command_id,
+                                     command_state.interrupted_response);
+            err = send_text(client, command_state.interrupted_response);
+            command_state.interrupted_command_id.clear();
+            command_state.interrupted_response.clear();
+          }
         } else {
           err = send_text(client, decision.response_json);
         }
@@ -1705,6 +1903,12 @@ esp_err_t run_stage_device_runtime(
         last_observation_us = 0;
       }
 
+      // A failed emergency OFF must never poll the previous ON/FLASH
+      // transition again before entering the fail-closed cleanup path.
+      if (command_state.controller_faulted) {
+        err = ESP_ERR_INVALID_STATE;
+        break;
+      }
       const uint64_t now_ms =
           static_cast<uint64_t>(esp_timer_get_time() / 1000ULL);
       const std::string terminal = poll_runtime_command(

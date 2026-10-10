@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-FOUNDATION_SHA = "d6946da3f003e8c0c2a72216804ef2035bf1288c"
+FOUNDATION_SHA = "12be83968efff876d8cb239b79368b3dafbf044b"
 
 class HubTrustContract(unittest.TestCase):
     def test_discovery_and_trust_are_owned_by_pinned_foundation(self):

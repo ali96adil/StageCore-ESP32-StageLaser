@@ -134,6 +134,53 @@ int main() {
   }
 
   {
+    // A safety OFF received while the flash's initial ON pulse is in
+    // progress must finish the relay release and then drive OFF, never
+    // resume flash or accept ON without a new explicit ARM.
+    StateMachine m;
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
+    assert(m.CommandArm(0).result == ResultCode::kAccepted);
+    assert(m.CommandFlashStart(1000, FlashRequest{1.0, 3000}).actuator ==
+           ActuatorAction::kPick);
+    assert(m.CommandSafeOff(1050).result == ResultCode::kAccepted);
+    assert(m.arm_state() == ArmState::kDisarmed);
+    assert(m.safe_off_pending());
+    release(m, 1180);
+    assert(m.safe_off_pending());
+    assert(m.Tick(1429).actuator == ActuatorAction::kNone);
+    assert(m.Tick(1430).actuator == ActuatorAction::kPick);
+    release(m, 1610);
+    assert(m.logical_state() == LogicalState::kOff);
+    assert(!m.flash_active());
+    assert(!m.safe_off_pending());
+    assert(m.CommandSetOn(1700).result == ResultCode::kRejectedDisarmed);
+    assert(m.Tick(5000).actuator == ActuatorAction::kNone);
+  }
+
+  {
+    // A SAFE_OFF after the flash has reached ON must cancel all later
+    // flashing edges, including the edge that would otherwise start at
+    // 1680ms. There is no implicit re-arm.
+    StateMachine m;
+    m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
+    assert(m.CommandArm(0).result == ResultCode::kAccepted);
+    assert(m.CommandFlashStart(1000, FlashRequest{1.0, 3000}).actuator ==
+           ActuatorAction::kPick);
+    release(m, 1180);
+    assert(m.flash_active());
+    assert(m.CommandSafeOff(1300).result == ResultCode::kAccepted);
+    assert(m.Tick(1429).actuator == ActuatorAction::kNone);
+    assert(m.Tick(1430).actuator == ActuatorAction::kPick);
+    release(m, 1610);
+    assert(m.logical_state() == LogicalState::kOff);
+    assert(!m.flash_active());
+    assert(m.Tick(1680).actuator == ActuatorAction::kNone);
+    assert(m.Tick(5000).actuator == ActuatorAction::kNone);
+    assert(m.CommandFlashStart(5001, FlashRequest{1.0, 1000}).result ==
+           ResultCode::kRejectedDisarmed);
+  }
+
+  {
     StateMachine m;
     m.Boot(tracked(LogicalState::kOff), ResetClass::kSoftware, false);
     assert(m.CommandArm(0).result == ResultCode::kAccepted);

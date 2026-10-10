@@ -33,6 +33,18 @@ class LaserCommandContract(unittest.TestCase):
         self.assertIn("CommandJournal::Remember", source)
         self.assertNotIn("terminal_result_json", header)
 
+    def test_command_envelope_rejects_duplicate_json_keys(self):
+        source = (ROOT / "src" / "laser_command_contract.cpp").read_text()
+        self.assertIn("std::strcmp(child->string, next->string) == 0", source)
+        self.assertIn("no_unknown_fields(root, allowed_root_key)", source)
+        self.assertIn("no_unknown_fields(command, allowed_command_key)", source)
+
+    def test_schema_integer_cast_rejects_out_of_range_values(self):
+        source = (ROOT / "src" / "laser_command_contract.cpp").read_text()
+        self.assertIn("std::numeric_limits<int>::min()", source)
+        self.assertIn("std::numeric_limits<int>::max()", source)
+        self.assertIn("std::isfinite(item->valuedouble)", source)
+
     def test_exact_project_snapshot_and_deadline_are_checked(self):
         source = (ROOT / "src" / "laser_command_contract.cpp").read_text()
         self.assertIn("parsed.project_id != expected_project_id", source)
