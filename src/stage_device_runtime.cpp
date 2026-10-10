@@ -1525,6 +1525,22 @@ esp_err_t run_stage_device_runtime(
     return watermark_err;
   }
 
+  // A previously accepted command generation must outlive reconnects,
+  // crashes, and controller reboots. If persistent state is unreadable,
+  // refuse ALL command authority; do not silently reset to generation zero.
+  uint64_t durable_control_generation = 0;
+  const esp_err_t generation_err =
+      stagelaser::command_control_generation_load(
+          &durable_control_generation);
+  if (generation_err != ESP_OK) {
+    const esp_err_t safe_err = drive_safe_off(laser);
+    if (safe_err != ESP_OK) {
+      ESP_LOGE(kTag, "Control generation unreadable and SafeOff unproven: %s",
+               esp_err_to_name(safe_err));
+    }
+    return generation_err;
+  }
+
   RuntimeContext context;
   RuntimeCommandState command_state;
   context.pending_command_frames.MarkEmergencyIssuedAt(
@@ -1814,8 +1830,33 @@ esp_err_t run_stage_device_runtime(
                   decision.command.issued_at_unix_ms);
           xSemaphoreGive(context.lock);
         }
+        // Fence all distinct-ID late commands on the same authenticated
+        // device identity. Never let stale ON/ARM/FLASH/READ gain authority
+        // after STOP/SafeOff, including after reboot. Older emergency OFF
+        // remains allowed because it only requests a safer logical state;
+        // it must never rewind the persisted generation.
+        bool generation_superseded = false;
         if (decision.disposition == stagelaser::CommandDisposition::kReady &&
-            (queue_superseded || timestamp_superseded)) {
+            !queue_superseded && !timestamp_superseded) {
+          const bool emergency_off =
+              decision.command.command_type == "LASER_SAFE_OFF" ||
+              decision.command.command_type == "LASER_DISARM";
+          const uint64_t candidate = decision.command.control_generation;
+          if (candidate <= durable_control_generation) {
+            generation_superseded = !emergency_off;
+          } else {
+            const esp_err_t generation_write =
+                stagelaser::command_control_generation_remember(candidate);
+            if (generation_write != ESP_OK) {
+              err = generation_write;  // Fail closed before any actuation.
+              break;
+            }
+            durable_control_generation = candidate;
+          }
+        }
+        if (decision.disposition == stagelaser::CommandDisposition::kReady &&
+            (queue_superseded || timestamp_superseded ||
+             generation_superseded)) {
           // Validate scope, timing and replay before returning a terminal
           // result; old queued commands must not re-arm or re-enable output.
           // Persist the command ID before the rejection is reported: a
