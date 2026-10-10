@@ -12,6 +12,7 @@ namespace stagecore::stagelaser {
 struct CommandEnvelope {
   std::string command_id;
   std::string command_type;
+  uint64_t control_generation = 0;
   int schema_version = 0;
   std::string issued_at;
   std::string deadline_at;
