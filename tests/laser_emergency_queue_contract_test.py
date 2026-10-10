@@ -74,7 +74,9 @@ class EmergencyOffQueueContract(unittest.TestCase):
     def test_reboot_restores_emergency_barrier_before_websocket_start(self):
         boot = section("esp_err_t run_stage_device_runtime(", "esp_websocket_client_config_t ws_config")
         self.assertIn("command_emergency_watermark_load(", boot)
-        self.assertIn("if (watermark_err != ESP_OK) return watermark_err;", boot)
+        self.assertIn("if (watermark_err != ESP_OK) {", boot)
+        self.assertIn("drive_safe_off(laser)", boot)
+        self.assertIn("return watermark_err;", boot)
         self.assertIn("MarkEmergencyIssuedAt(", boot)
         self.assertLess(boot.index("command_emergency_watermark_load("),
                         boot.index("MarkEmergencyIssuedAt("))
