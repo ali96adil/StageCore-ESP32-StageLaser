@@ -74,6 +74,8 @@ enum class PendingGoal {
 
 struct RuntimeCommandState {
   bool pending = false;
+  std::string interrupted_command_id;
+  std::string interrupted_response;
   bool controller_faulted = false;
   PendingGoal goal = PendingGoal::kNone;
   std::string command_id;
@@ -84,6 +86,12 @@ struct RuntimeCommandState {
   std::string last_applied_command_id;
   std::string last_command_type;
   std::string last_command_result;
+};
+
+struct QueuedCommandFrame {
+  std::string text;
+  uint64_t queue_epoch = 0;
+  bool emergency = false;
 };
 
 struct RuntimeContext {
@@ -103,7 +111,8 @@ struct RuntimeContext {
   PrepareRequest pending_prepare;
   bool commands_enabled = false;
   bool runtime_ready_received = false;
-  std::vector<std::string> pending_command_frames;
+  std::vector<QueuedCommandFrame> pending_command_frames;
+  uint64_t command_queue_epoch = 0;
   std::string pending_firmware_frame;
   std::string pending_setup_ap_frame;
   stagelaser::CommandJournal journal;
@@ -483,17 +492,54 @@ bool parse_runtime_ready(RuntimeContext *context, const cJSON *root) {
   return true;
 }
 
+// This is only a queue-order hint. The full authenticated command envelope,
+// deadline, assignment scope and replay fence are validated before actuation.
+// A forged/malformed emergency hint can suppress queued work (fail closed),
+// but must never directly actuate the relay.
+bool is_emergency_off_frame(const std::string &text) {
+  cJSON *root = cJSON_Parse(text.c_str());
+  if (root == nullptr) return false;
+  const cJSON *type = cJSON_GetObjectItemCaseSensitive(root, "type");
+  const cJSON *command = cJSON_GetObjectItemCaseSensitive(root, "command");
+  const cJSON *kind = cJSON_GetObjectItemCaseSensitive(command, "command_type");
+  const bool emergency =
+      cJSON_IsString(type) && type->valuestring != nullptr &&
+      std::strcmp(type->valuestring, "command.execute") == 0 &&
+      cJSON_IsObject(command) && cJSON_IsString(kind) &&
+      kind->valuestring != nullptr &&
+      (std::strcmp(kind->valuestring, "LASER_SAFE_OFF") == 0 ||
+       std::strcmp(kind->valuestring, "LASER_DISARM") == 0);
+  cJSON_Delete(root);
+  return emergency;
+}
+
 bool queue_command(RuntimeContext *context, const std::string &text) {
   if (context == nullptr || !context->commands_enabled ||
       context->lock == nullptr || text.empty()) {
     return false;
   }
+  const bool emergency = is_emergency_off_frame(text);
   if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
     return false;
   }
   bool accepted = false;
-  if (context->pending_command_frames.size() < 8) {
-    context->pending_command_frames.push_back(text);
+  // One extra emergency slot is reserved even when all 8 ordinary slots
+  // are occupied. Never silently discard a frame without a terminal ACK.
+  const size_t limit = emergency ? 9 : 8;
+  if (context->pending_command_frames.size() < limit) {
+    if (emergency) {
+      ++context->command_queue_epoch;
+    }
+    QueuedCommandFrame frame;
+    frame.text = text;
+    frame.queue_epoch = context->command_queue_epoch;
+    frame.emergency = emergency;
+    if (emergency) {
+      context->pending_command_frames.insert(
+          context->pending_command_frames.begin(), std::move(frame));
+    } else {
+      context->pending_command_frames.push_back(std::move(frame));
+    }
     accepted = true;
   }
   xSemaphoreGive(context->lock);
@@ -739,8 +785,10 @@ bool take_prepare(RuntimeContext *context, PrepareRequest *request) {
   return present;
 }
 
-bool take_command(RuntimeContext *context, std::string *frame) {
-  if (context == nullptr || frame == nullptr || context->lock == nullptr) {
+bool take_command(RuntimeContext *context, std::string *frame,
+                  bool *superseded) {
+  if (context == nullptr || frame == nullptr || superseded == nullptr ||
+      context->lock == nullptr) {
     return false;
   }
   if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
@@ -748,7 +796,9 @@ bool take_command(RuntimeContext *context, std::string *frame) {
   }
   const bool present = !context->pending_command_frames.empty();
   if (present) {
-    *frame = std::move(context->pending_command_frames.front());
+    const QueuedCommandFrame &next = context->pending_command_frames.front();
+    *superseded = next.queue_epoch < context->command_queue_epoch;
+    *frame = next.text;
     context->pending_command_frames.erase(context->pending_command_frames.begin());
   }
   const bool more = !context->pending_command_frames.empty();
@@ -1166,7 +1216,9 @@ std::string start_ready_command(
     RuntimeCommandState *state,
     uint64_t now_ms) {
   if (laser == nullptr || state == nullptr) return {};
-  if (state->pending) {
+  const bool emergency_off = command.command_type == "LASER_SAFE_OFF" ||
+                             command.command_type == "LASER_DISARM";
+  if (state->pending && !emergency_off) {
     mark_result(state, command, "REJECTED", false);
     return stagelaser::make_command_result(
         device_id, command.command_id, "REJECTED", "LASER_BUSY", "RUNTIME",
@@ -1200,6 +1252,23 @@ std::string start_ready_command(
           "StageLaser replay fence could not be persisted before actuation",
           false);
     }
+  }
+
+  // The emergency command has passed the durable replay fence above.
+  // Supersede an in-progress ON/FLASH transition rather than rejecting OFF
+  // as LASER_BUSY. The old terminal result is emitted by the runtime loop.
+  if (state->pending && emergency_off) {
+    const std::string old_id = state->command_id;
+    state->interrupted_command_id = old_id;
+    state->interrupted_response = stagelaser::make_command_result(
+        device_id, old_id, "CANCELLED", "DEVICE_COMMAND_SUPERSEDED",
+        "SAFETY", "StageLaser emergency OFF superseded the prior command",
+        false);
+    state->pending = false;
+    state->goal = PendingGoal::kNone;
+    state->command_id.clear();
+    state->command_type.clear();
+    state->flash = stagelaser::FlashObservationInfo{};
   }
 
   stagelaser::ControllerOutcome outcome{};
@@ -1677,7 +1746,9 @@ esp_err_t run_stage_device_runtime(
       }
 
       std::string command_frame;
-      if ((bits & kCommandBit) && take_command(&context, &command_frame)) {
+      bool queue_superseded = false;
+      if ((bits & kCommandBit) &&
+          take_command(&context, &command_frame, &queue_superseded)) {
         stagelaser::CommandDecision decision;
         const esp_err_t command_err =
             stagelaser::evaluate_command_execute_frame(
@@ -1688,7 +1759,17 @@ esp_err_t run_stage_device_runtime(
           break;
         }
 
-        if (decision.disposition == stagelaser::CommandDisposition::kReady) {
+        if (decision.disposition == stagelaser::CommandDisposition::kReady &&
+            queue_superseded) {
+          // Validate scope, timing and replay before returning a terminal
+          // result; old queued commands must not re-arm or re-enable output.
+          const std::string response = stagelaser::make_command_result(
+              context.device_id, decision.command.command_id, "REJECTED",
+              "DEVICE_COMMAND_SUPERSEDED", "SAFETY",
+              "An emergency OFF superseded this queued command", false);
+          context.journal.Remember(decision.command.command_id, response);
+          err = send_text(client, response);
+        } else if (decision.disposition == stagelaser::CommandDisposition::kReady) {
           const std::string response = start_ready_command(
               decision.command, context.device_id, laser, &command_state,
               esp_timer_get_time() / 1000ULL);
@@ -1698,6 +1779,13 @@ esp_err_t run_stage_device_runtime(
           }
           context.journal.Remember(decision.command.command_id, response);
           err = send_text(client, response);
+          if (err == ESP_OK && !command_state.interrupted_response.empty()) {
+            context.journal.Remember(command_state.interrupted_command_id,
+                                     command_state.interrupted_response);
+            err = send_text(client, command_state.interrupted_response);
+            command_state.interrupted_command_id.clear();
+            command_state.interrupted_response.clear();
+          }
         } else {
           err = send_text(client, decision.response_json);
         }
