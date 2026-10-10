@@ -64,6 +64,8 @@ struct PrepareRequest {
   std::string challenge;
   std::string target_project_id;
   std::string target_runtime_snapshot_id;
+  bool visual_off_resync_allowed = false;
+  std::string visual_off_boot_id;
 };
 
 enum class PendingGoal {
@@ -422,6 +424,21 @@ bool parse_prepare(RuntimeContext *context, const cJSON *root) {
     return false;
   }
 
+  const cJSON *visual_permit =
+      cJSON_GetObjectItemCaseSensitive(root, "visual_off_resync_allowed");
+  if (visual_permit != nullptr) {
+    if (!cJSON_IsBool(visual_permit)) return false;
+    if (cJSON_IsTrue(visual_permit)) {
+      request.visual_off_resync_allowed = true;
+      if (!nonempty_string(root, "visual_off_boot_id",
+                           &request.visual_off_boot_id) ||
+          request.visual_off_boot_id != boot_id() ||
+          context->assignment_state != "UNASSIGNED" ||
+          context->commands_enabled) {
+        return false;
+      }
+    }
+  }
   const cJSON *safe_off =
       cJSON_GetObjectItemCaseSensitive(root, "safe_off_required");
   const cJSON *arm =
@@ -1796,6 +1813,28 @@ esp_err_t run_stage_device_runtime(
 
       PrepareRequest prepare;
       if ((bits & kPrepareBit) && take_prepare(&context, &prepare)) {
+        // The physical fixture is an ordinary pushbutton-toggle stage lamp.
+        // A fresh human visual OFF check is passed by the authenticated Hub
+        // only for first assignment, fenced to the current MCU boot.
+        // Correct NVS software truth only: never pulse an UNKNOWN output.
+        if (prepare.visual_off_resync_allowed &&
+            context.assignment_state == "UNASSIGNED" &&
+            prepare.visual_off_boot_id == boot_id() &&
+            laser->machine().arm_state() == stagelaser::ArmState::kDisarmed &&
+            laser->machine().logical_state() == stagelaser::LogicalState::kUnknown &&
+            laser->machine().resync_required() &&
+            !laser->machine().pulse_in_progress() &&
+            !laser->machine().flash_active() &&
+            !laser->machine().safe_off_pending()) {
+          const auto visual_resync = laser->ResyncOff();
+          if (visual_resync.fault != stagelaser::ControllerFault::kNone ||
+              !known_safe_off(*laser)) {
+            err = ESP_ERR_INVALID_STATE;
+            break;
+          }
+          ESP_LOGI(kTag, "operator-observed OFF resync before assignment"
+                          " (no relay pulse)");
+        }
         err = drive_safe_off(laser);
         if (err != ESP_OK) break;
         const std::string ack =
