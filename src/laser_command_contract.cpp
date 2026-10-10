@@ -124,6 +124,22 @@ bool empty_payload(const cJSON *payload) {
   return cJSON_IsObject(payload) && cJSON_GetArraySize(payload) == 0;
 }
 
+// Output-enabling commands cannot remain valid indefinitely after a delayed
+// WebSocket frame or a Hub/device reconnection. STOP/SAFE_OFF and OFF commands
+// are deliberately exempt so a clock outage does not prevent safe actions.
+bool requires_fresh_deadline(const std::string &command_type,
+                             const cJSON *payload) {
+  if (command_type == "LASER_ARM" ||
+      command_type == "LASER_SET_ON" ||
+      command_type == "LASER_FLASH_START") return true;
+  if (command_type == "LASER_STATE_RESYNC") {
+    const cJSON *state = cJSON_GetObjectItemCaseSensitive(payload, "state");
+    return cJSON_IsString(state) && state->valuestring != nullptr &&
+           std::strcmp(state->valuestring, "ON") == 0;
+  }
+  return false;
+}
+
 bool valid_payload(const std::string &command_type,
                    const cJSON *payload) {
   if (!cJSON_IsObject(payload)) return false;
@@ -424,6 +440,21 @@ esp_err_t evaluate_command_execute_frame(
     return ESP_OK;
   }
 
+  const bool enabling_command =
+      requires_fresh_deadline(parsed.command_type, payload);
+  if (enabling_command && !parsed.has_deadline) {
+    decision->command = parsed;
+    decision->disposition = CommandDisposition::kRejected;
+    decision->response_json =
+        reject(expected_device_id, parsed.command_id,
+               "DEVICE_COMMAND_DEADLINE_REQUIRED", "TIMING",
+               "Output-enabling StageLaser commands require a Hub deadline",
+               false);
+    journal->Remember(parsed.command_id, decision->response_json);
+    cJSON_Delete(root);
+    return ESP_OK;
+  }
+
   if (parsed.has_deadline) {
     if (!trusted_clock_ready()) {
       decision->command = parsed;
@@ -438,6 +469,27 @@ esp_err_t evaluate_command_execute_frame(
     }
 
     const int64_t now_ms = trusted_now_unix_ms();
+    // A far-future issued_at can bypass the persistent emergency OFF
+    // timestamp watermark even though the deadline is still in the future.
+    // Reject such future-dated enabling frames. Deliberate OFF commands
+    // remain available during an inconsistent timestamp situation.
+    constexpr uint64_t kMaximumFutureIssuedSkewMS = 5000;
+    if (enabling_command && now_ms > 0 &&
+        parsed.issued_at_unix_ms > now_ms &&
+        static_cast<uint64_t>(parsed.issued_at_unix_ms) -
+                static_cast<uint64_t>(now_ms) >
+            kMaximumFutureIssuedSkewMS) {
+      decision->command = parsed;
+      decision->disposition = CommandDisposition::kRejected;
+      decision->response_json =
+          reject(expected_device_id, parsed.command_id,
+                 "DEVICE_COMMAND_ISSUED_IN_FUTURE", "TIMING",
+                 "Output-enabling command issued_at exceeds clock tolerance",
+                 false);
+      journal->Remember(parsed.command_id, decision->response_json);
+      cJSON_Delete(root);
+      return ESP_OK;
+    }
     if (now_ms <= 0 || now_ms > parsed.deadline_at_unix_ms) {
       decision->command = parsed;
       decision->disposition = CommandDisposition::kTimedOut;
