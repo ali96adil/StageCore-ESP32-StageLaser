@@ -7,6 +7,7 @@
 
 #include "cJSON.h"
 #include "laser_contract.h"
+#include "laser_timing_fence.h"
 #include "trusted_clock.h"
 
 namespace stagecore::stagelaser {
@@ -129,15 +130,13 @@ bool empty_payload(const cJSON *payload) {
 // are deliberately exempt so a clock outage does not prevent safe actions.
 bool requires_fresh_deadline(const std::string &command_type,
                              const cJSON *payload) {
-  if (command_type == "LASER_ARM" ||
-      command_type == "LASER_SET_ON" ||
-      command_type == "LASER_FLASH_START") return true;
+  bool resync_to_on = false;
   if (command_type == "LASER_STATE_RESYNC") {
     const cJSON *state = cJSON_GetObjectItemCaseSensitive(payload, "state");
-    return cJSON_IsString(state) && state->valuestring != nullptr &&
-           std::strcmp(state->valuestring, "ON") == 0;
+    resync_to_on = cJSON_IsString(state) && state->valuestring != nullptr &&
+                   std::strcmp(state->valuestring, "ON") == 0;
   }
-  return false;
+  return RequiresFreshDeadline(command_type, resync_to_on);
 }
 
 bool valid_payload(const std::string &command_type,
@@ -473,12 +472,8 @@ esp_err_t evaluate_command_execute_frame(
     // timestamp watermark even though the deadline is still in the future.
     // Reject such future-dated enabling frames. Deliberate OFF commands
     // remain available during an inconsistent timestamp situation.
-    constexpr uint64_t kMaximumFutureIssuedSkewMS = 5000;
-    if (enabling_command && now_ms > 0 &&
-        parsed.issued_at_unix_ms > now_ms &&
-        static_cast<uint64_t>(parsed.issued_at_unix_ms) -
-                static_cast<uint64_t>(now_ms) >
-            kMaximumFutureIssuedSkewMS) {
+    if (enabling_command &&
+        IssuedTooFarInFuture(parsed.issued_at_unix_ms, now_ms)) {
       decision->command = parsed;
       decision->disposition = CommandDisposition::kRejected;
       decision->response_json =
