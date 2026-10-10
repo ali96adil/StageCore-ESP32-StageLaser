@@ -20,12 +20,23 @@
 #ifndef STAGECORE_LASER_INDEPENDENT_INTERLOCK_QUALIFIED
 #define STAGECORE_LASER_INDEPENDENT_INTERLOCK_QUALIFIED 0
 #endif
+#ifndef STAGECORE_VISIBLE_LAMP_PROFILE
+#define STAGECORE_VISIBLE_LAMP_PROFILE 0
+#endif
 
-// Do not turn the generic CI / no-actuation image into an actuation build.
-// A production image requires an independently reviewed physical qualification,
-// including a beam inhibit that remains effective when the ESP32 is unpowered.
+// The generic CI/default firmware remains no-actuation.
+// The explicit VISIBLE_LAMP profile is for an ordinary stage light whose
+// momentary pushbutton is driven through a GPIO3 -> NPN -> 5V relay circuit.
+// It must never be used on a genuine laser or other hazardous emitter.
 // The output is active-HIGH at the ESP GPIO only when driving a qualified NPN
 // pull-to-GND interface; NEVER connect the 5V active-low relay IN to the ESP.
+#if STAGECORE_VISIBLE_LAMP_PROFILE != 0 && STAGECORE_VISIBLE_LAMP_PROFILE != 1
+#error "Stage lamp profile must be exactly 0 or 1"
+#endif
+#if STAGECORE_VISIBLE_LAMP_PROFILE == 1 && STAGECORE_LASER_ACTUATION_ENABLED != 1
+#error "Visible lamp profile must be an explicit enabled actuation build"
+#endif
+
 #if STAGECORE_LASER_ACTUATION_ENABLED == 1
 #if STAGECORE_LASER_OUTPUT_GPIO != 3
 #error "StageLaser actuation requires separately qualified GPIO3 hardware profile"
@@ -33,8 +44,12 @@
 #if STAGECORE_LASER_RELAY_DRIVER_QUALIFIED != 1
 #error "StageLaser relay driver/boot/reset qualification is required"
 #endif
-#if STAGECORE_LASER_INDEPENDENT_INTERLOCK_QUALIFIED != 1
-#error "StageLaser independent beam-inhibit interlock qualification is required"
+// StageLaser is a legacy product/protocol name. A visible stage lamp is NOT a
+// laser-emission device. The non-laser lamp GPIO3 profile uses a momentary
+// pushbutton relay and therefore does not require a laser beam interlock.
+// Actual laser-emission hardware retains its independent interlock requirement.
+#if STAGECORE_VISIBLE_LAMP_PROFILE != 1 && STAGECORE_LASER_INDEPENDENT_INTERLOCK_QUALIFIED != 1
+#error "Real laser emission requires an independently qualified beam interlock"
 #endif
 #if STAGECORE_LASER_SHARED_POWER_QUALIFIED != 1
 #error "StageLaser true cold-power OFF qualification is required"
