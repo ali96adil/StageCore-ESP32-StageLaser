@@ -40,6 +40,20 @@ class EmergencyCommandQueue {
   bool empty() const { return pending_.empty(); }
   size_t size() const { return pending_.size(); }
 
+  // A Hub-issued emergency OFF establishes a conservative command-time
+  // watermark. This rejects an earlier command that arrives over the wire
+  // AFTER the emergency was processed (outside the local queue). It does
+  // not replace an authenticated monotonic generation or survive reboot.
+  void MarkEmergencyIssuedAt(int64_t issued_at_unix_ms) {
+    if (issued_at_unix_ms > emergency_issued_at_unix_ms_)
+      emergency_issued_at_unix_ms_ = issued_at_unix_ms;
+  }
+
+  bool IsStaleIssuedAt(int64_t issued_at_unix_ms) const {
+    return emergency_issued_at_unix_ms_ > 0 &&
+           issued_at_unix_ms <= emergency_issued_at_unix_ms_;
+  }
+
  private:
   struct Entry {
     std::string text;
@@ -47,6 +61,7 @@ class EmergencyCommandQueue {
   };
   std::vector<Entry> pending_;
   uint64_t epoch_ = 0;
+  int64_t emergency_issued_at_unix_ms_ = 0;
 };
 
 }  // namespace stagecore
