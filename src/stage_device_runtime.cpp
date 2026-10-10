@@ -22,6 +22,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "command_replay_store.h"
+#include "control_generation_fence.h"
 #include "emergency_command_queue.h"
 #include "config_store.h"
 #include "firmware_update.h"
@@ -1842,9 +1843,14 @@ esp_err_t run_stage_device_runtime(
               decision.command.command_type == "LASER_SAFE_OFF" ||
               decision.command.command_type == "LASER_DISARM";
           const uint64_t candidate = decision.command.control_generation;
-          if (candidate <= durable_control_generation) {
-            generation_superseded = !emergency_off;
-          } else {
+          const auto generation_decision =
+              stagelaser::DecideControlGeneration(
+                  candidate, durable_control_generation, emergency_off);
+          if (generation_decision ==
+              stagelaser::ControlGenerationDecision::kReject) {
+            generation_superseded = true;
+          } else if (generation_decision ==
+                     stagelaser::ControlGenerationDecision::kAdvance) {
             const esp_err_t generation_write =
                 stagelaser::command_control_generation_remember(candidate);
             if (generation_write != ESP_OK) {
