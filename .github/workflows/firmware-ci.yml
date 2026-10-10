@@ -187,3 +187,69 @@ jobs:
           path: ${{ runner.temp }}/stagelaser-unqualified/
           retention-days: 7
           if-no-files-found: error
+
+  # Explicit regular stage lamp build. The default images above stay non-actuating.
+  # This binary is only for GPIO3 -> qualified NPN -> 5V relay pushbutton.
+  firmware-build-stage-lamp-gpio3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+    steps:
+      - name: Checkout exact lamp source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - name: Verify exact clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio==6.2.0
+      - name: Build GPIO3 ordinary stage-lamp firmware
+        run: pio run -e esp32c3-stage-lamp-gpio3-live
+      - name: Verify explicit lamp flags and exact firmware binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -A20 '^\\[env:esp32c3-stage-lamp-gpio3-live\\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=1'
+          grep -A20 '^\\[env:esp32c3-stage-lamp-gpio3-live\\]' platformio.ini | grep -q -- '-DSTAGECORE_VISIBLE_LAMP_PROFILE=1'
+          grep -A20 '^\\[env:esp32c3-stage-lamp-gpio3-live\\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=3'
+          test -f .pio/build/esp32c3-stage-lamp-gpio3-live/firmware.bin
+          strings .pio/build/esp32c3-stage-lamp-gpio3-live/firmware.bin | grep -F "$EXPECTED_SHA"
+      - name: Stage traceable GPIO3 lamp artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/stagelamp-gpio3-live"
+          mkdir -p "$OUT"
+          cp .pio/build/esp32c3-stage-lamp-gpio3-live/firmware.bin "$OUT/firmware.bin"
+          (
+            cd "$OUT"
+            sha256sum firmware.bin > SHA256SUMS
+          )
+          {
+            echo "source_revision=$EXPECTED_SHA"
+            echo "fixture_kind=ordinary-visible-stage-lamp"
+            echo "legacy_device_name=StageLaser"
+            echo "platformio_env=esp32c3-stage-lamp-gpio3-live"
+            echo "actuation_enabled=1"
+            echo "output_gpio=3"
+            echo "interface=GPIO3-high-to-NPN-5V-active-low-relay"
+            echo "contact=momentary-toggle"
+            echo "cold_start_assumption=shared-power-off"
+            echo "hardware_observation=NOT_CI_VERIFIED"
+            echo "required_hub_protocol=control_generation-from-StageCore-PR475"
+          } > "$OUT/BUILDINFO"
+      - name: Upload GPIO3 stage lamp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagecore-stage-lamp-gpio3-live
+          path: ${{ runner.temp }}/stagelamp-gpio3-live/
+          retention-days: 7
+          if-no-files-found: error
