@@ -52,6 +52,19 @@ int main() {
   }
   {
     EmergencyCommandQueue q;
+    assert(!q.IsStaleIssuedAt(1700000000000LL));
+    q.MarkEmergencyIssuedAt(1700000000500LL);
+    assert(q.IsStaleIssuedAt(1700000000000LL));
+    assert(q.IsStaleIssuedAt(1700000000500LL));
+    assert(!q.IsStaleIssuedAt(1700000000501LL));
+    q.MarkEmergencyIssuedAt(1700000000200LL);  // Older OFF cannot rewind.
+    assert(q.IsStaleIssuedAt(1700000000500LL));
+    q.MarkEmergencyIssuedAt(1700000000600LL);
+    assert(q.IsStaleIssuedAt(1700000000599LL));
+    assert(!q.IsStaleIssuedAt(1700000000601LL));
+  }
+  {
+    EmergencyCommandQueue q;
     for (int i = 0; i < 8; ++i) assert(q.Push("ON", false));
     assert(q.Push("SAFE_OFF-1", true));
     // No silent dropping of a second emergency when the 9-slot queue is full.
