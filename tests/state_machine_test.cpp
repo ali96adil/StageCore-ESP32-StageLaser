@@ -147,9 +147,9 @@ int main() {
     assert(m.safe_off_pending());
     release(m, 1180);
     assert(m.safe_off_pending());
-    assert(m.Tick(1430).actuator == ActuatorAction::kNone);
-    assert(m.Tick(1431).actuator == ActuatorAction::kPick);
-    release(m, 1611);
+    assert(m.Tick(1429).actuator == ActuatorAction::kNone);
+    assert(m.Tick(1430).actuator == ActuatorAction::kPick);
+    release(m, 1610);
     assert(m.logical_state() == LogicalState::kOff);
     assert(!m.flash_active());
     assert(!m.safe_off_pending());
@@ -169,9 +169,9 @@ int main() {
     release(m, 1180);
     assert(m.flash_active());
     assert(m.CommandSafeOff(1300).result == ResultCode::kAccepted);
-    assert(m.Tick(1430).actuator == ActuatorAction::kNone);
-    assert(m.Tick(1431).actuator == ActuatorAction::kPick);
-    release(m, 1611);
+    assert(m.Tick(1429).actuator == ActuatorAction::kNone);
+    assert(m.Tick(1430).actuator == ActuatorAction::kPick);
+    release(m, 1610);
     assert(m.logical_state() == LogicalState::kOff);
     assert(!m.flash_active());
     assert(m.Tick(1680).actuator == ActuatorAction::kNone);
