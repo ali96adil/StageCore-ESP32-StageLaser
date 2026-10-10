@@ -12,6 +12,7 @@ namespace {
 
 constexpr char kNamespace[] = "laser_cmd";
 constexpr char kBlobKey[] = "seen_v1";
+constexpr char kEmergencyWatermarkKey[] = "off_ts_v1";
 constexpr uint32_t kMagic = 0x534C434D;  // "SLCM"
 constexpr uint8_t kVersion = 1;
 constexpr size_t kDigestBytes = 32;
@@ -126,6 +127,39 @@ esp_err_t command_replay_remember(const std::string &command_id) {
   err = nvs_open(kNamespace, NVS_READWRITE, &handle);
   if (err != ESP_OK) return err;
   err = nvs_set_blob(handle, kBlobKey, &blob, sizeof(blob));
+  if (err == ESP_OK) err = nvs_commit(handle);
+  nvs_close(handle);
+  return err;
+}
+
+esp_err_t command_emergency_watermark_load(int64_t *issued_at_unix_ms) {
+  if (issued_at_unix_ms == nullptr) return ESP_ERR_INVALID_ARG;
+  *issued_at_unix_ms = 0;
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(kNamespace, NVS_READONLY, &handle);
+  if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+  if (err != ESP_OK) return err;
+  int64_t value = 0;
+  err = nvs_get_i64(handle, kEmergencyWatermarkKey, &value);
+  nvs_close(handle);
+  if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+  if (err != ESP_OK) return err;
+  if (value <= 0) return ESP_ERR_INVALID_STATE;
+  *issued_at_unix_ms = value;
+  return ESP_OK;
+}
+
+esp_err_t command_emergency_watermark_remember(int64_t issued_at_unix_ms) {
+  if (issued_at_unix_ms <= 0) return ESP_ERR_INVALID_ARG;
+  int64_t previous = 0;
+  esp_err_t err = command_emergency_watermark_load(&previous);
+  if (err != ESP_OK) return err;
+  if (issued_at_unix_ms <= previous) return ESP_OK;
+
+  nvs_handle_t handle;
+  err = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if (err != ESP_OK) return err;
+  err = nvs_set_i64(handle, kEmergencyWatermarkKey, issued_at_unix_ms);
   if (err == ESP_OK) err = nvs_commit(handle);
   nvs_close(handle);
   return err;
