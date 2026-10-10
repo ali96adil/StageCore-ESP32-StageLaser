@@ -50,6 +50,21 @@ bool number_field(const cJSON *object, const char *key, int *value) {
   return true;
 }
 
+bool positive_control_generation(const cJSON *object, uint64_t *value) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(
+      object, "control_generation");
+  // JSON/cJSON numbers are doubles: stay in the exact integer range to
+  // prevent generation aliasing or truncation at the ESP32 boundary.
+  constexpr double kMaxExactGeneration = 9007199254740991.0;
+  if (!cJSON_IsNumber(item) || !std::isfinite(item->valuedouble) ||
+      item->valuedouble < 1.0 ||
+      item->valuedouble > kMaxExactGeneration ||
+      item->valuedouble != std::floor(item->valuedouble) ||
+      value == nullptr) return false;
+  *value = static_cast<uint64_t>(item->valuedouble);
+  return true;
+}
+
 bool allowed_root_key(const char *key) {
   return std::strcmp(key, "type") == 0 ||
          std::strcmp(key, "schema_version") == 0 ||
@@ -62,7 +77,7 @@ bool allowed_command_key(const char *key) {
       "command_id", "command_type", "schema_version", "issued_at",
       "deadline_at", "project_id", "runtime_snapshot_id", "issuer",
       "correlation_id", "causation_id", "priority", "idempotency_key",
-      "payload",
+      "control_generation", "payload",
   };
   for (const char *candidate : kAllowed) {
     if (std::strcmp(key, candidate) == 0) return true;
@@ -344,6 +359,7 @@ esp_err_t evaluate_command_execute_frame(
       string_field(command, "project_id", &parsed.project_id, true, kMaxID) &&
       string_field(command, "runtime_snapshot_id",
                    &parsed.runtime_snapshot_id, true, kMaxID) &&
+      positive_control_generation(command, &parsed.control_generation) &&
       string_field(command, "issuer", &parsed.issuer, true, kMaxIssuer) &&
       string_field(command, "correlation_id",
                    &parsed.correlation_id, false, kMaxID) &&
