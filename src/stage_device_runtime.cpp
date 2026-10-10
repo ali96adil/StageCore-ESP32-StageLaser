@@ -1495,7 +1495,16 @@ esp_err_t run_stage_device_runtime(
   const esp_err_t watermark_err =
       stagelaser::command_emergency_watermark_load(
           &durable_emergency_issued_at);
-  if (watermark_err != ESP_OK) return watermark_err;
+  if (watermark_err != ESP_OK) {
+    // Corrupt NVS blocks connection. Attempt SafeOff as well, but never
+    // claim physical OFF merely because the attempt was made.
+    const esp_err_t safe_err = drive_safe_off(laser);
+    if (safe_err != ESP_OK) {
+      ESP_LOGE(kTag, "Emergency barrier unreadable and SafeOff unproven: %s",
+               esp_err_to_name(safe_err));
+    }
+    return watermark_err;
+  }
 
   RuntimeContext context;
   RuntimeCommandState command_state;
