@@ -72,9 +72,13 @@ int main() {
     assert(rebooted.CommandSafeOff(0).result == ResultCode::kRejectedUnsafe);
     assert(rebooted.relay_pulse_count() == m.relay_pulse_count());
 
-    auto edge = m.Tick(1680);
+    // At 1 Hz the first OFF transition is 500 ms after the ON pulse
+    // began, not 500 ms after its 180 ms release.
+    assert(m.Tick(1499).actuator == ActuatorAction::kNone);
+    auto edge = m.Tick(1500);
     assert(edge.actuator == ActuatorAction::kPick);
-    release(m, 1860);
+    release(m, 1680);
+    assert(m.Tick(1999).actuator == ActuatorAction::kNone);
     assert(m.logical_state() == LogicalState::kFlashOff);
     m.CommandFlashStop(2200);
     auto settle = m.Tick(2300);
