@@ -18,6 +18,13 @@ esp_err_t command_replay_seen(const std::string &command_id, bool *seen);
 // Re-remembering an existing ID is a no-op.
 esp_err_t command_replay_remember(const std::string &command_id);
 
+// Persistent monotonic output-control generation. No command that could
+// enable the laser may actuate with generation <= this value. This watermark
+// survives ESP32 restart; corruption or NVS failure must fail closed.
+// Hub allocates the generation durably for the entire device identity.
+esp_err_t command_control_generation_load(uint64_t *generation);
+esp_err_t command_control_generation_remember(uint64_t generation);
+
 // Conservative, reboot-persistent timestamp barrier for emergency OFF.
 // Returns 0 when no barrier has been stored. Corrupt/unavailable NVS is an
 // error, never interpreted as an empty barrier.
