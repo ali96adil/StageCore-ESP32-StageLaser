@@ -54,7 +54,17 @@ esp_err_t init_nvs() {
 }
 
 [[noreturn]] void hold_safe_failure(const char *reason) {
-  ESP_LOGE(kTag, "safe failure: %s", reason);
+  // If the relay driver was initialized, release its GPIO output before
+  // parking. This only opens the momentary toggle contact; it is NOT proof
+  // that an independently powered laser is physically OFF.
+  if (stagecore::stagelaser::relay_actuation_enabled()) {
+    const esp_err_t release_err = stagecore::stagelaser::relay_release();
+    if (release_err != ESP_OK) {
+      ESP_LOGE(kTag, "relay GPIO release attempt failed: %s",
+               esp_err_to_name(release_err));
+    }
+  }
+  ESP_LOGE(kTag, "safe failure: %s; physical beam state unverified", reason);
   while (true) vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
