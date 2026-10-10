@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 #include "cJSON.h"
@@ -39,7 +40,9 @@ bool string_field(const cJSON *object, const char *key,
 bool number_field(const cJSON *object, const char *key, int *value) {
   const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
   if (!cJSON_IsNumber(item) || !std::isfinite(item->valuedouble) ||
-      item->valuedouble != std::floor(item->valuedouble)) {
+      item->valuedouble != std::floor(item->valuedouble) ||
+      item->valuedouble < static_cast<double>(std::numeric_limits<int>::min()) ||
+      item->valuedouble > static_cast<double>(std::numeric_limits<int>::max())) {
     return false;
   }
   *value = static_cast<int>(item->valuedouble);
@@ -72,6 +75,12 @@ bool no_unknown_fields(const cJSON *object,
   const cJSON *child = nullptr;
   cJSON_ArrayForEach(child, object) {
     if (child->string == nullptr || !allowed(child->string)) return false;
+    // JSON object keys must be unique. Otherwise different parsers can
+    // disagree about the command ID, scope, timestamp or payload.
+    for (const cJSON *next = child->next; next != nullptr; next = next->next) {
+      if (next->string == nullptr ||
+          std::strcmp(child->string, next->string) == 0) return false;
+    }
   }
   return true;
 }
