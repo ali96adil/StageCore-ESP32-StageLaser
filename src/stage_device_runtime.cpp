@@ -22,6 +22,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "command_replay_store.h"
+#include "emergency_command_queue.h"
 #include "config_store.h"
 #include "firmware_update.h"
 #include "laser_command_contract.h"
@@ -88,12 +89,6 @@ struct RuntimeCommandState {
   std::string last_command_result;
 };
 
-struct QueuedCommandFrame {
-  std::string text;
-  uint64_t queue_epoch = 0;
-  bool emergency = false;
-};
-
 struct RuntimeContext {
   EventGroupHandle_t events = nullptr;
   SemaphoreHandle_t lock = nullptr;
@@ -111,8 +106,7 @@ struct RuntimeContext {
   PrepareRequest pending_prepare;
   bool commands_enabled = false;
   bool runtime_ready_received = false;
-  std::vector<QueuedCommandFrame> pending_command_frames;
-  uint64_t command_queue_epoch = 0;
+  EmergencyCommandQueue pending_command_frames;
   std::string pending_firmware_frame;
   std::string pending_setup_ap_frame;
   stagelaser::CommandJournal journal;
@@ -522,26 +516,7 @@ bool queue_command(RuntimeContext *context, const std::string &text) {
   if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
     return false;
   }
-  bool accepted = false;
-  // One extra emergency slot is reserved even when all 8 ordinary slots
-  // are occupied. Never silently discard a frame without a terminal ACK.
-  const size_t limit = emergency ? 9 : 8;
-  if (context->pending_command_frames.size() < limit) {
-    if (emergency) {
-      ++context->command_queue_epoch;
-    }
-    QueuedCommandFrame frame;
-    frame.text = text;
-    frame.queue_epoch = context->command_queue_epoch;
-    frame.emergency = emergency;
-    if (emergency) {
-      context->pending_command_frames.insert(
-          context->pending_command_frames.begin(), std::move(frame));
-    } else {
-      context->pending_command_frames.push_back(std::move(frame));
-    }
-    accepted = true;
-  }
+  const bool accepted = context->pending_command_frames.Push(text, emergency);
   xSemaphoreGive(context->lock);
   if (accepted) xEventGroupSetBits(context->events, kCommandBit);
   return accepted;
@@ -794,13 +769,7 @@ bool take_command(RuntimeContext *context, std::string *frame,
   if (xSemaphoreTake(context->lock, pdMS_TO_TICKS(50)) != pdTRUE) {
     return false;
   }
-  const bool present = !context->pending_command_frames.empty();
-  if (present) {
-    const QueuedCommandFrame &next = context->pending_command_frames.front();
-    *superseded = next.queue_epoch < context->command_queue_epoch;
-    *frame = next.text;
-    context->pending_command_frames.erase(context->pending_command_frames.begin());
-  }
+  const bool present = context->pending_command_frames.Pop(frame, superseded);
   const bool more = !context->pending_command_frames.empty();
   xSemaphoreGive(context->lock);
   if (!more) xEventGroupClearBits(context->events, kCommandBit);
