@@ -217,9 +217,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -A20 '^\\[env:esp32c3-stage-lamp-gpio3-live\\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=1'
-          grep -A20 '^\\[env:esp32c3-stage-lamp-gpio3-live\\]' platformio.ini | grep -q -- '-DSTAGECORE_VISIBLE_LAMP_PROFILE=1'
-          grep -A20 '^\\[env:esp32c3-stage-lamp-gpio3-live\\]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=3'
+          grep -F -A20 '[env:esp32c3-stage-lamp-gpio3-live]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_ACTUATION_ENABLED=1'
+          grep -F -A20 '[env:esp32c3-stage-lamp-gpio3-live]' platformio.ini | grep -q -- '-DSTAGECORE_VISIBLE_LAMP_PROFILE=1'
+          grep -F -A20 '[env:esp32c3-stage-lamp-gpio3-live]' platformio.ini | grep -q -- '-DSTAGECORE_LASER_OUTPUT_GPIO=3'
           test -f .pio/build/esp32c3-stage-lamp-gpio3-live/firmware.bin
           strings .pio/build/esp32c3-stage-lamp-gpio3-live/firmware.bin | grep -F "$EXPECTED_SHA"
       - name: Stage traceable GPIO3 lamp artifact
