@@ -71,6 +71,21 @@ class EmergencyOffQueueContract(unittest.TestCase):
         self.assertIn("timestamp_superseded", process)
         self.assertIn("queue_superseded || timestamp_superseded", process)
 
+    def test_reboot_restores_emergency_barrier_before_websocket_start(self):
+        boot = section("esp_err_t run_stage_device_runtime(", "esp_websocket_client_config_t ws_config")
+        self.assertIn("command_emergency_watermark_load(", boot)
+        self.assertIn("if (watermark_err != ESP_OK) return watermark_err;", boot)
+        self.assertIn("MarkEmergencyIssuedAt(", boot)
+        self.assertLess(boot.index("command_emergency_watermark_load("),
+                        boot.index("MarkEmergencyIssuedAt("))
+        command = section("std::string start_ready_command(", "std::string poll_runtime_command(")
+        self.assertIn("command_emergency_watermark_remember(", command)
+        self.assertLess(command.index("command_emergency_watermark_remember("),
+                        command.index("command_replay_remember(command.command_id)"))
+        self.assertLess(command.index("command_replay_remember(command.command_id)"),
+                        command.index("MarkEmergencyIssuedAt("))
+        self.assertIn("state->controller_faulted = true;", command)
+
     def test_emergency_failure_never_polls_old_on_transition(self):
         command = section("std::string start_ready_command(", "std::string poll_runtime_command(")
         self.assertIn("if (emergency_off) state->controller_faulted = true;", command)
