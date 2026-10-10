@@ -159,6 +159,11 @@ Decision StateMachine::BeginPulse(bool target_on, uint64_t now_ms, bool from_fla
   pending_target_on_ = target_on;
   pulse_from_flash_ = from_flash;
   pulse_in_progress_ = true;
+  // Count a Flash half-cycle from relay pick, not from relay release.
+  // Otherwise the 180 ms pick/release pulse length is added to every
+  // requested interval (1 Hz becomes roughly 0.74 Hz). The existing
+  // min_rest_ms guard still prevents early actuation.
+  if (from_flash && flash_active_) ScheduleNextFlashEdge(now_ms);
   release_requested_ = false;
   release_due_ms_ = now_ms + limits_.pulse_ms;
   logical_ = target_on ? LogicalState::kTurningOn : LogicalState::kTurningOff;
@@ -272,7 +277,7 @@ void StateMachine::ConfirmRelease(bool release_succeeded, uint64_t now_ms) {
       logical_ = LogicalState::kOff;
       return;
     }
-    ScheduleNextFlashEdge(now_ms);
+    // Next Flash edge was scheduled when the pulse was picked.
   }
 }
 
