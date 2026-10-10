@@ -25,7 +25,7 @@ class ProvisioningContract(unittest.TestCase):
         self.assertIn("stagecore_foundation:", manifest)
         self.assertIn("https://github.com/ali96adil/StageCore.git", manifest)
         self.assertIn(
-            "version: d6946da3f003e8c0c2a72216804ef2035bf1288c",
+            "version: 4495a381cc40f06f44e0a16da4a4dc82a9bceb6c",
             manifest,
         )
         self.assertIn("StageLaser-Recovery-", source)

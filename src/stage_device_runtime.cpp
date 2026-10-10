@@ -30,6 +30,21 @@
 #ifndef STAGECORE_FW_VERSION
 #define STAGECORE_FW_VERSION "0.1.0-dev"
 #endif
+#ifndef STAGECORE_BUILD_REVISION
+#define STAGECORE_BUILD_REVISION "unknown"
+#endif
+#ifndef STAGECORE_LASER_ACTUATION_ENABLED
+#define STAGECORE_LASER_ACTUATION_ENABLED 0
+#endif
+#ifndef STAGECORE_LASER_OUTPUT_GPIO
+#define STAGECORE_LASER_OUTPUT_GPIO -1
+#endif
+#ifndef STAGECORE_LASER_SHARED_POWER_QUALIFIED
+#define STAGECORE_LASER_SHARED_POWER_QUALIFIED 0
+#endif
+#ifndef STAGECORE_GPIO_NO_LOAD_QUALIFICATION
+#define STAGECORE_GPIO_NO_LOAD_QUALIFICATION 0
+#endif
 #ifndef STAGECORE_OTA_ENABLED
 #define STAGECORE_OTA_ENABLED 0
 #endif
@@ -209,9 +224,15 @@ stagelaser::ObservationMetadata make_observation_metadata(
     const RuntimeCommandState *commands = nullptr) {
   stagelaser::ObservationMetadata metadata;
   metadata.firmware_version = STAGECORE_FW_VERSION;
+  metadata.build_revision = STAGECORE_BUILD_REVISION;
+  metadata.actuation_enabled = STAGECORE_LASER_ACTUATION_ENABLED == 1;
+  metadata.shared_power_qualified = STAGECORE_LASER_SHARED_POWER_QUALIFIED == 1;
+  metadata.gpio_no_load_qualification = STAGECORE_GPIO_NO_LOAD_QUALIFICATION == 1;
+  metadata.output_gpio = STAGECORE_LASER_OUTPUT_GPIO;
   metadata.boot_id = boot_id();
   metadata.uptime_seconds = esp_timer_get_time() / 1000000LL;
   metadata.reset_reason = reset_reason_text();
+  metadata.reset_reason_code = static_cast<int>(esp_reset_reason());
   metadata.ip_address = station_ip_address();
 
   wifi_ap_record_t ap{};
