@@ -23,6 +23,17 @@ class EmergencyOffQueueContract(unittest.TestCase):
         self.assertIn("pending_.insert(pending_.begin()", policy)
         self.assertIn("pending_.push_back(std::move(entry))", policy)
 
+    def test_malformed_duplicate_key_emergency_hint_does_not_preempt_queue(self):
+        classifier = section("bool unique_emergency_hint_keys(", "bool queue_command(")
+        self.assertIn("std::strcmp(field->string, next->string) == 0", classifier)
+        self.assertIn("unique_emergency_hint_keys(root)", classifier)
+        self.assertIn("unique_emergency_hint_keys(command)", classifier)
+        self.assertIn('"LASER_SAFE_OFF"', classifier)
+        self.assertIn('"LASER_DISARM"', classifier)
+        # Queue priority remains a hint, not authorization to actuate.
+        processing = section("std::string command_frame;", "const uint64_t now_ms =")
+        self.assertIn("evaluate_command_execute_frame(", processing)
+
     def test_queued_pre_emergency_commands_cannot_actuate_or_retry(self):
         dequeue = section("bool take_command(", "bool take_setup_ap_maintenance(")
         self.assertIn("pending_command_frames.Pop(frame, superseded)", dequeue)
